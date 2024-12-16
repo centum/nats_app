@@ -1,0 +1,66 @@
+[tool.poetry]
+name = "nats-app"
+version = "0.1.0"
+description = "NATS App is wrapper client on NATS Connection"
+authors = ["Vadym Statishyn <statishin@gmail.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+keywords = [
+    "nats",
+]
+classifiers = [
+    "Topic :: Software Development :: Libraries :: Python Modules"
+]
+packages = [
+    { include = "nats_app" },
+]
+
+
+[tool.poetry.dependencies]
+python = "^3.12"
+nats-py = "^2.9"
+pydantic = "^2"
+fastapi = "^0.115.6"
+ujson = "^5.10.0"
+
+[tool.poetry.dev-dependencies]
+pytest = "^7"
+pytest-asyncio = "^0"
+ruff = "^0.8"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry-version-plugin]
+source = "git-tag"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+minversion = "6.0"
+#addopts = "-ra --disable-pytest-warnings --no-cov -vv"
+norecursedirs = "/out/*"
+testpaths = [
+    "nats_app",
+]
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+ignore = ["B008", "F401"]
+
+[tool.ruff]
+line-length = 120
+exclude = []

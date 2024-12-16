@@ -1,0 +1,27 @@
+name: Build and Publish to TestPyPI
+
+on: [ workflow_dispatch ]
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Fetch tags
+        run: |
+          git fetch --prune --unshallow --tags
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+
+      - run: poetry install
+
+      - run: poetry config repositories.test-pypi https://test.pypi.org/legacy/
+      - run: poetry config pypi-token.test-pypi "${{ secrets.TEST_PYPI_API_TOKEN }}"
+
+      - name: Publish package
+        run: poetry publish --build -r test-pypi
