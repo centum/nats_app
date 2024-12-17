@@ -1,5 +1,7 @@
 # NATS App
 
+[![pypi](https://img.shields.io/pypi/v/nats_app.svg)](https://pypi.python.org/pypi/nats_app)
+[![versions](https://img.shields.io/pypi/pyversions/nats_app.svg)](https://github.com/centum/nats_app)
 [![Build](https://github.com/centum/nats_app/actions/workflows/build.yml/badge.svg)](https://github.com/centum/nats_app/actions/workflows/build.yml)
 [![Apache 2 licensed](https://img.shields.io/badge/license-Apache2-blue.svg)](https://raw.githubusercontent.com/centum/nats_app/refs/heads/master/LICENSE)
 

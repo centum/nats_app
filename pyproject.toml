@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nats-app"
-version = "0.1.0"
+version = "0.1.1"
 description = "NATS App is wrapper client on NATS Connection"
 authors = ["Vadym Statishyn <statishin@gmail.com>"]
 license = "Apache-2.0"
@@ -9,7 +9,17 @@ keywords = [
     "nats",
 ]
 classifiers = [
-    "Topic :: Software Development :: Libraries :: Python Modules"
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    'License :: OSI Approved :: Apache Software License',
+    'Intended Audience :: Developers',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.8',
+    'Programming Language :: Python :: 3.9',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13'
 ]
 packages = [
     { include = "nats_app" },
@@ -20,12 +30,13 @@ packages = [
 python = "^3.12"
 nats-py = "^2.9"
 pydantic = "^2"
-fastapi = "^0.115.6"
-ujson = "^5.10.0"
+fastapi = "^0.115"
+ujson = "^5.10"
 
 [tool.poetry.dev-dependencies]
 pytest = "^8"
 pytest-asyncio = "^0"
+pytest-cov = "^6"
 ruff = "^0.8"
 
 [build-system]
