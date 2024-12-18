@@ -17,6 +17,15 @@ jobs:
           python-version: "3.12"
           os: "ubuntu-latest"
 
+      - name: Get package version
+        run: |
+          TAG=$(git describe HEAD --tags --abbrev=0)
+          PROJECT_VERSION=$(git describe HEAD --tags)
+          PROJECT_VERSION="${PROJECT_VERSION#v}"
+          echo "Version: $PROJECT_VERSION"
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> $GITHUB_ENV
+          if [[ "$TAG" != "$PROJECT_VERSION" ]]; then exit 1; fi
+
       - name: Check publish token set
         run: |
           if ! [ -n "${{secrets.PYPI_API_TOKEN}}" ]; then exit 1; fi
@@ -24,4 +33,4 @@ jobs:
       - name: Publish to PyPI
         run: |
           poetry config pypi-token.pypi "${{secrets.PYPI_API_TOKEN}}"
-          poetry publish --build
+          PROJECT_VERSION="${{ env.PROJECT_VERSION }}" poetry publish --build

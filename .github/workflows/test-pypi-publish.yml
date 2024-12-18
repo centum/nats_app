@@ -23,5 +23,14 @@ jobs:
       - run: poetry config repositories.test-pypi https://test.pypi.org/legacy/
       - run: poetry config pypi-token.test-pypi "${{ secrets.TEST_PYPI_API_TOKEN }}"
 
+      - name: Get package version
+        run: |
+          TAG=$(git describe HEAD --tags --abbrev=0)
+          PROJECT_VERSION=$(git describe HEAD --tags)
+          PROJECT_VERSION="${PROJECT_VERSION#v}"
+          echo "Version: $PROJECT_VERSION"
+          echo "PROJECT_VERSION=$PROJECT_VERSION" >> $GITHUB_ENV
+          # if [[ "$TAG" != "$PROJECT_VERSION" ]]; then exit 1; fi
+
       - name: Publish package
-        run: poetry publish --build -r test-pypi
+        run: PROJECT_VERSION="${{ env.PROJECT_VERSION }}" poetry publish --build -r test-pypi
