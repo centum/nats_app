@@ -2,12 +2,15 @@ import asyncio
 import importlib
 import logging
 from collections.abc import Sequence
+from enum import Enum
 from typing import Any, Optional
 
 import nats
 from nats.aio import subscription
 from nats.errors import BadSubscriptionError
 from nats.js import JetStreamContext, api, client
+from nats.js.api import StreamConfig
+from nats.js.errors import NotFoundError
 
 from nats_app.errors import default_error_handler
 from nats_app.marshaling import from_bytes, normalize_payload, to_bytes
@@ -17,6 +20,24 @@ from nats_app.router import NATSRouter
 
 logger = logging.getLogger(__name__)
 
+JS_DENY_CHANGE_PARAMS = ("name", "num_replicas", "sealed")
+
+JS_ALLOWED_CHANGE_PARAMS = (
+    "subjects",
+    "max_consumers",
+    "max_msgs",
+    "max_bytes",
+    "max_age",
+    "storage",
+    "retention",
+    "discard",
+    "max_msg_size",
+    "duplicate_window",
+    "allow_rollup_hdrs",
+    "deny_delete",
+    "deny_purge",
+)
+
 NATS = nats.NATS
 
 
@@ -25,6 +46,7 @@ class NATSApp:
     _nc: nats.NATS | None = None
     _js: Optional[JetStreamContext] = None
     _js_opts: dict[str, Any] = {}
+    _jetstream_configs: list[StreamConfig]
     _push_subscribers: list[SubscriptionMeta]
     _js_push_subscribers: list[PushSubscriptionMeta]
     _js_pull_subscribers: list[PullSubscriptionMeta]
@@ -40,6 +62,7 @@ class NATSApp:
     ) -> None:
         self.NATS_URL = url
         self.middlewares = middlewares or []
+        self._jetstream_configs = []
         self._push_subscribers = []
         self._js_push_subscribers = []
         self._js_pull_subscribers = []
@@ -82,6 +105,7 @@ class NATSApp:
             **options,
         )
         logger.info("Connected to NATS")
+        await self._streams_create_or_update()
         await self.subscribe_all()
 
     def __getattr__(self, name):
@@ -105,6 +129,50 @@ class NATSApp:
                 except BadSubscriptionError as e:
                     raise ValueError(f"nats: invalid subscription: {subscriber.subject}") from e
         self._subscriptions = []
+
+    @classmethod
+    def _stream_config_dict(cls, config: StreamConfig) -> dict:
+        new = {k: v if not isinstance(v, Enum) else v.value for k, v in config.as_dict().items()}
+        if new.get("duplicate_window") == 0:
+            new["duplicate_window"] = 120000000000  # default value
+        return new
+
+    @classmethod
+    def _is_equal(cls, exist, new, fields) -> bool:
+        return all([exist.get(n) == new.get(n) for n in fields if new.get(n) is not None])
+
+    @classmethod
+    def _get_change_dict(cls, exist, new, fields):
+        return {
+            n: {"old": exist.get(n), "new": new.get(n)}
+            for n in fields
+            if new.get(n) is not None and exist.get(n) != new.get(n)
+        }
+
+    async def _streams_create_or_update(self):
+        for config in self._jetstream_configs:
+            if config.name is None:
+                raise ValueError("nats: stream name is required")
+            try:
+                si = await self.js.stream_info(config.name)
+                exist = self._stream_config_dict(si.config)
+                new = self._stream_config_dict(config)
+
+                if not self._is_equal(exist, new, JS_DENY_CHANGE_PARAMS):
+                    change = self._get_change_dict(exist, new, JS_DENY_CHANGE_PARAMS)
+                    logger.error(f"deny update stream {change}")
+                    raise ValueError(f"nats: stream config params {JS_DENY_CHANGE_PARAMS} deny change")
+
+                if not self._is_equal(exist, new, JS_ALLOWED_CHANGE_PARAMS):
+                    change = self._get_change_dict(exist, new, JS_ALLOWED_CHANGE_PARAMS)
+                    si = await self.js.update_stream(config)
+                    logger.info(f"update stream {change} after stream info: {si.as_dict()}")
+                else:
+                    logger.info(f"unchanged stream: {config.name}")
+
+            except NotFoundError:
+                si = await self.js.add_stream(config)
+                logger.info(f"add stream info: {si.as_dict()}")
 
     async def _js_pull_subscribe_all(self):
         for r in self._js_pull_subscribers:
@@ -271,17 +339,19 @@ class NATSApp:
     @property
     def register_routers(self):
         def _fn(obj):
-            if not isinstance(obj, NATSRouter):
-                return
-            # push_subscribe RPC handlers
-            for r in obj.push_subscribers:
-                self._push_subscribers.append(r)
+            if isinstance(obj, NATSRouter):
+                # push_subscribe RPC handlers
+                for r in obj.push_subscribers:
+                    self._push_subscribers.append(r)
 
-            for r in obj.js_push_subscribers:
-                self._js_push_subscribers.append(r)
+                for r in obj.js_push_subscribers:
+                    self._js_push_subscribers.append(r)
 
-            for r in obj.js_pull_subscribers:
-                self._js_pull_subscribers.append(r)
+                for r in obj.js_pull_subscribers:
+                    self._js_pull_subscribers.append(r)
+
+            elif isinstance(obj, StreamConfig):
+                self._jetstream_configs.append(obj)
 
         return _fn
 
