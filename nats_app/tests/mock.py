@@ -10,6 +10,9 @@ from nats.aio.client import DEFAULT_INBOX_PREFIX
 from nats.aio.msg import Msg
 from nats.js.api import (
     INBOX_PREFIX,
+    AccountInfo,
+    AccountLimits,
+    APIStats,
     ConsumerConfig,
     DeliverPolicy,
     PubAck,
@@ -88,7 +91,45 @@ class MockJetStreamContext(nats.js.JetStreamContext):
         self._stream = {}
         self._subscribers = {}
 
+    async def account_info(self) -> AccountInfo:
+        return AccountInfo(
+            memory=0,
+            storage=0,
+            streams=0,
+            consumers=0,
+            limits=AccountLimits(
+                max_memory=0,
+                max_storage=0,
+                max_streams=0,
+                max_consumers=0,
+                max_ack_pending=0,
+                memory_max_stream_bytes=0,
+                storage_max_stream_bytes=0,
+                max_bytes_required=False,
+            ),
+            api=APIStats(
+                total=0,
+                errors=0,
+            )
+        )
+
+    async def stream_info(self, name: str, subjects_filter: Optional[str] = None) -> StreamInfo:
+        return StreamInfo(
+            config=StreamConfig(name=name, subjects=[subjects_filter]),
+            state=StreamState(messages=1, bytes=1, first_seq=1, last_seq=1, consumer_count=1),
+        )
+
     async def add_stream(self, config: Optional[StreamConfig] = None, **params) -> StreamInfo:
+        return StreamInfo(
+            config=StreamConfig(),
+            state=StreamState(messages=1, bytes=1, first_seq=1, last_seq=1, consumer_count=1),
+        )
+
+    async def update_stream(
+            self,
+            config: Optional[StreamConfig] = None,
+            **params
+    ) -> StreamInfo:
         return StreamInfo(
             config=StreamConfig(),
             state=StreamState(messages=1, bytes=1, first_seq=1, last_seq=1, consumer_count=1),
