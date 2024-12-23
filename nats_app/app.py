@@ -10,6 +10,7 @@ from nats.aio import subscription
 from nats.errors import BadSubscriptionError
 from nats.js import JetStreamContext, api, client
 from nats.js.api import StreamConfig
+from nats.js.client import DEFAULT_JS_SUB_PENDING_BYTES_LIMIT, DEFAULT_JS_SUB_PENDING_MSGS_LIMIT
 from nats.js.errors import NotFoundError
 
 from nats_app.errors import default_error_handler
@@ -38,20 +39,67 @@ JS_ALLOWED_CHANGE_PARAMS = (
     "deny_purge",
 )
 
-NATS = nats.NATS
+
+class NATS(nats.NATS):
+    """NATS client is proxy-class with additional features."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._js_pull_subscribers_tasks = set()
+
+    async def push_from_pull_subscribe(self, js, r: PullSubscriptionMeta):
+        """Create a pull subscription handler and run it in background."""
+        sub = await js.pull_subscribe(
+            subject=r.subject,
+            durable=r.durable,
+            stream=r.stream,
+            config=r.config,
+            pending_msgs_limit=r.pending_msgs_limit,
+            pending_bytes_limit=r.pending_bytes_limit,
+            inbox_prefix=r.inbox_prefix,
+        )
+        info = await sub.consumer_info()
+
+        pull_task = None
+
+        async def _task():
+            try:
+                while True:
+                    try:
+                        msgs = await sub.fetch(batch=r.batch, timeout=r.timeout, heartbeat=r.heartbeat)
+                        await r.handler(msgs)
+                    except TimeoutError:
+                        logger.info("pull message timeout")
+                        continue
+                    except Exception as e:
+                        logger.info(f"Process exception: {e}")
+                    await asyncio.sleep(1)
+            finally:
+                if pull_task:
+                    self._js_pull_subscribers_tasks.remove(pull_task)
+                logger.info(f"stop pull subscription on stream: {info.stream_name} consumer:{info.name}")
+
+        pull_task = asyncio.create_task(_task())
+        self._js_pull_subscribers_tasks.add(pull_task)
+        logger.info(f"start pull subscription on stream: '{info.stream_name}' consumer: '{info.name}'")
+
+    async def _js_pull_subscriber_stop(self):
+        """Stop all pull subscribers background tasks."""
+        for task in self._js_pull_subscribers_tasks:
+            task.cancel()
+        self._js_pull_subscribers_tasks = set()
 
 
 class NATSApp:
     NATS_URL: list[str]
-    _nc: nats.NATS | None = None
+    _nc: NATS | None = None
     _js: Optional[JetStreamContext] = None
     _js_opts: dict[str, Any] = {}
     _jetstream_configs: list[StreamConfig]
     _push_subscribers: list[SubscriptionMeta]
     _js_push_subscribers: list[PushSubscriptionMeta]
-    _js_pull_subscribers: list[PullSubscriptionMeta]
     _subscriptions: list[subscription.Subscription] = []
-    _js_pull_subscribers_tasks: list[asyncio.Task] = []
+    _js_pull_subscribers_tasks: set[asyncio.Task] = set()
     middlewares: Optional[list]
 
     def __init__(
@@ -60,6 +108,9 @@ class NATSApp:
         js_opts: Optional[dict[str, Any]] = None,
         middlewares: Optional[Sequence] = None,
     ) -> None:
+        """
+        Create a new NATSApp instance.
+        """
         self.NATS_URL = url
         self.middlewares = middlewares or []
         self._jetstream_configs = []
@@ -67,7 +118,6 @@ class NATSApp:
         self._js_push_subscribers = []
         self._js_pull_subscribers = []
         self._subscriptions = []
-        self._js_pull_subscribers_tasks = []
         self._js_opts = js_opts or {}
 
         def _error_handler(m, e):
@@ -80,9 +130,11 @@ class NATSApp:
         self.set_error_handler(default_error_handler)
 
     async def connect(self, **options):
+        """Connect to NATS server."""
+
         async def disconnected_cb():
             logger.info("NATS disconnected")
-            self._js_pull_subscriber_stop()
+            await self._js_pull_subscriber_stop()
 
         async def reconnected_cb():
             logger.info(f"NATS reconnected {self._nc.connected_url.netloc}")
@@ -113,12 +165,14 @@ class NATSApp:
 
     @property
     def js(self):
+        """Return JetStreamContext instance."""
         if not self._js:
             self._js = self._nc.jetstream(**self._js_opts)
         return self._js
 
     async def unsubscribe_all(self):
-        self._js_pull_subscriber_stop()
+        """Unsubscribe all subscriptions."""
+        await self._js_pull_subscriber_stop()
         if self._nc and not self._nc.is_closed:
             for subscriber in self._subscriptions:
                 try:
@@ -132,6 +186,7 @@ class NATSApp:
 
     @classmethod
     def _stream_config_dict(cls, config: StreamConfig) -> dict:
+        """Convert StreamConfig to dict with default values."""
         new = {k: v if not isinstance(v, Enum) else v.value for k, v in config.as_dict().items()}
         if new.get("duplicate_window") == 0:
             new["duplicate_window"] = 120000000000  # default value
@@ -139,10 +194,12 @@ class NATSApp:
 
     @classmethod
     def _is_equal(cls, exist, new, fields) -> bool:
+        """Check if two config are equal."""
         return all([exist.get(n) == new.get(n) for n in fields if new.get(n) is not None])
 
     @classmethod
     def _get_change_dict(cls, exist, new, fields):
+        """Return a dict with changed"""
         return {
             n: {"old": exist.get(n), "new": new.get(n)}
             for n in fields
@@ -150,6 +207,7 @@ class NATSApp:
         }
 
     async def _streams_create_or_update(self):
+        """Create or update JetStream streams."""
         for config in self._jetstream_configs:
             if config.name is None:
                 raise ValueError("nats: stream name is required")
@@ -175,10 +233,12 @@ class NATSApp:
                 logger.info(f"add stream info: {si.as_dict()}")
 
     async def _js_pull_subscribe_all(self):
+        """Subscribe all jetstream pull subscribers."""
         for r in self._js_pull_subscribers:
             await self._register_js_pull_subscriber(r)
 
     async def subscribe_all(self):
+        """Subscribe all subscribers."""
         for r in self._push_subscribers:
             await self._register_handler(r)
 
@@ -188,6 +248,7 @@ class NATSApp:
         await self._js_pull_subscribe_all()
 
     async def close(self):
+        """Close NATS connection."""
         await self.unsubscribe_all()
 
         if self._nc and not self._nc.is_closed:
@@ -199,9 +260,11 @@ class NATSApp:
         self._js = None
 
     def set_error_handler(self, fn):
+        """Set error handler."""
         self._error_handler = fn  # noqa
 
     def add_middlewares(self, middlewares):
+        """Add NATS App middlewares."""
         for m in middlewares:
             if isinstance(m, str):
                 try:
@@ -219,6 +282,7 @@ class NATSApp:
         reply: str = "",
         headers: Optional[dict[str, str]] = None,
     ) -> None:
+        """Publish a message."""
         if not isinstance(payload, bytes):
             payload = normalize_payload(payload)
             payload = to_bytes(payload)
@@ -232,6 +296,7 @@ class NATSApp:
         old_style: bool = False,
         headers: Optional[dict[str, Any]] = None,
     ):
+        """Send a request."""
         if not isinstance(payload, bytes):
             payload = normalize_payload(payload)
             payload = to_bytes(payload)
@@ -249,6 +314,8 @@ class NATSApp:
         pending_msgs_limit: int = subscription.DEFAULT_SUB_PENDING_MSGS_LIMIT,
         pending_bytes_limit: int = subscription.DEFAULT_SUB_PENDING_BYTES_LIMIT,
     ):
+        """Decorator for push_subscribe handler."""
+
         def wrapper(fn):
             self._push_subscribers.append(
                 SubscriptionMeta(
@@ -281,6 +348,8 @@ class NATSApp:
         headers_only: Optional[bool] = None,
         inactive_threshold: Optional[float] = None,
     ):
+        """Decorator for jetstream push_subscribe handler."""
+
         def wrapper(fn):
             self._js_push_subscribers.append(
                 PushSubscriptionMeta(
@@ -317,6 +386,8 @@ class NATSApp:
         timeout: Optional[float] = None,
         heartbeat: Optional[float] = None,
     ):
+        """Decorator for jetstream pull_subscribe handler."""
+
         def wrapper(fn):
             self._js_pull_subscribers.append(
                 PullSubscriptionMeta(
@@ -338,6 +409,8 @@ class NATSApp:
 
     @property
     def register_routers(self):
+        """Register NATSRouter instances."""
+
         def _fn(obj):
             if isinstance(obj, NATSRouter):
                 # push_subscribe RPC handlers
@@ -356,6 +429,7 @@ class NATSApp:
         return _fn
 
     async def _register_handler(self, r: SubscriptionMeta):
+        """Register push_subscribe handler."""
         handler = r.handler
         for m in reversed(self.middlewares):
             handler = m(handler)
@@ -373,6 +447,7 @@ class NATSApp:
         logger.info("NATS push_subscribe handler on subject: %s", r.subject)
 
     async def _register_js_push_subscriber(self, r: PushSubscriptionMeta):
+        """Register jetstream push_subscribe handler."""
         try_connect = 3  # wait nats jetstream started
         while True:
             try:
@@ -403,36 +478,11 @@ class NATSApp:
                 logger.info("NATS Connect to nats jetstream timeout. Retry connect.")
 
     async def _register_js_pull_subscriber(self, r: PullSubscriptionMeta):
-        sub = await self.js.pull_subscribe(
-            subject=r.subject,
-            durable=r.durable,
-            stream=r.stream,
-            config=r.config,
-            pending_msgs_limit=r.pending_msgs_limit,
-            pending_bytes_limit=r.pending_bytes_limit,
-            inbox_prefix=r.inbox_prefix,
-        )
-        info = await sub.consumer_info()
+        """Register jetstream pull_subscribe handler."""
+        if self._nc:
+            await self._nc.push_from_pull_subscribe(self.js, r)
 
-        async def _task():
-            try:
-                while True:
-                    try:
-                        msgs = await sub.fetch(batch=r.batch, timeout=r.timeout, heartbeat=r.heartbeat)
-                        await r.handler(msgs)
-                    except TimeoutError:
-                        logger.info("pull message timeout")
-                        continue
-                    except Exception as e:
-                        logger.info(f"Process exception: {e}")
-                    await asyncio.sleep(1)
-            finally:
-                logger.info(f"stop pull subscription on stream: {info.stream_name} consumer:{info.name}")
-
-        self._js_pull_subscribers_tasks.append(asyncio.create_task(_task()))
-        logger.info(f"start pull subscription on stream: '{info.stream_name}' consumer: '{info.name}'")
-
-    def _js_pull_subscriber_stop(self):
-        for task in self._js_pull_subscribers_tasks:
-            task.cancel()
-        self._js_pull_subscribers_tasks = []
+    async def _js_pull_subscriber_stop(self):
+        """Stop all jetstream pull subscribers."""
+        if self._nc:
+            await self._nc._js_pull_subscriber_stop()

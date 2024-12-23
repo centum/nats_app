@@ -176,11 +176,7 @@ async def test_pull_subscription(nc):
         nonlocal result
         result = msgs[0].data
 
-    try:
-        await nc.connect()
-        await nc.js.publish("app.subject.validate_echo", b"TEST123")
-        await asyncio.sleep(1)
-        assert isinstance(result, bytes)
-        assert result == b"TEST123"
-    finally:
-        nc._js_pull_subscriber_stop()
+    await nc.connect()
+    await nc.js.publish("app.subject.validate_echo", b"TEST123")
+    assert isinstance(result, bytes)
+    assert result == b"TEST123"

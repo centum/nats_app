@@ -27,7 +27,7 @@ from nats.js.client import (
 )
 from nats.nuid import NUID
 
-from nats_app.meta import SubscriptionMeta
+from nats_app.meta import PullSubscriptionMeta, SubscriptionMeta
 
 _characters = string.ascii_letters + string.digits
 
@@ -74,11 +74,6 @@ class MockSubscriber:
         timeout: Optional[float] = 5,
         heartbeat: Optional[float] = None,
     ) -> list[Msg]:
-        # if not self._stream_data:
-        #     await asyncio.sleep(timeout)
-        # result = self._stream_data
-        # self._stream_data = []
-        # return result
         return self._stream_data
 
 
@@ -110,7 +105,7 @@ class MockJetStreamContext(nats.js.JetStreamContext):
             api=APIStats(
                 total=0,
                 errors=0,
-            )
+            ),
         )
 
     async def stream_info(self, name: str, subjects_filter: Optional[str] = None) -> StreamInfo:
@@ -125,11 +120,7 @@ class MockJetStreamContext(nats.js.JetStreamContext):
             state=StreamState(messages=1, bytes=1, first_seq=1, last_seq=1, consumer_count=1),
         )
 
-    async def update_stream(
-            self,
-            config: Optional[StreamConfig] = None,
-            **params
-    ) -> StreamInfo:
+    async def update_stream(self, config: Optional[StreamConfig] = None, **params) -> StreamInfo:
         return StreamInfo(
             config=StreamConfig(),
             state=StreamState(messages=1, bytes=1, first_seq=1, last_seq=1, consumer_count=1),
@@ -241,6 +232,7 @@ class MockClient:
         self._connected = False
         self._inbox_prefix = bytearray(DEFAULT_INBOX_PREFIX)
         self._nuid = NUID()
+        self._js_pull_subscribers = []
 
     async def connect(self, servers, **options) -> None:
         if not isinstance(servers, list):
@@ -397,3 +389,14 @@ class MockClient:
 
     def jetstream(self, **opts) -> MockJetStreamContext:
         return MockJetStreamContext(self, **opts)
+
+    async def push_from_pull_subscribe(self, js, r: PullSubscriptionMeta):
+        async def _handler(m: Msg):
+            await r.handler([m])
+
+        sub = await js.subscribe(r.subject, queue=r.durable, cb=_handler)
+        self._js_pull_subscribers.append(sub)
+
+    async def _js_pull_subscriber_stop(self):
+        for sub in self._js_pull_subscribers:
+            await sub.unsubsctibe()
