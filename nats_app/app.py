@@ -49,16 +49,19 @@ class NATS(nats.NATS):
 
     async def push_from_pull_subscribe(self, js, r: PullSubscriptionMeta):
         """Create a pull subscription handler and run it in background."""
-        sub = await js.pull_subscribe(
-            subject=r.subject,
-            durable=r.durable,
-            stream=r.stream,
-            config=r.config,
-            pending_msgs_limit=r.pending_msgs_limit,
-            pending_bytes_limit=r.pending_bytes_limit,
-            inbox_prefix=r.inbox_prefix,
-        )
-        info = await sub.consumer_info()
+        try:
+            sub = await js.pull_subscribe(
+                subject=r.subject,
+                durable=r.durable,
+                stream=r.stream,
+                config=r.config,
+                pending_msgs_limit=r.pending_msgs_limit,
+                pending_bytes_limit=r.pending_bytes_limit,
+                inbox_prefix=r.inbox_prefix,
+            )
+            info = await sub.consumer_info()
+        except NotFoundError as e:
+            raise ValueError(f"stream '{r.stream}' not found") from e
 
         pull_task = None
 
