@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nats-app"
-version = "0.1.4"
+version = "0.1.5"
 description = "NATS App is wrapper client on NATS Connection"
 authors = ["Vadym Statishyn <statishin@gmail.com>"]
 license = "Apache-2.0"
@@ -14,7 +14,6 @@ classifiers = [
     'Intended Audience :: Developers',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3',
-    'Programming Language :: Python :: 3.8',
     'Programming Language :: Python :: 3.9',
     'Programming Language :: Python :: 3.10',
     'Programming Language :: Python :: 3.11',
