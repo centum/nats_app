@@ -94,7 +94,7 @@ class NATS(nats.NATS):
 
 
 class NATSApp:
-    NATS_URL: list[str]
+    _connection_kwargs: dict
     _nc: NATS | None = None
     _js: Optional[JetStreamContext] = None
     _js_opts: dict[str, Any] = {}
@@ -107,14 +107,18 @@ class NATSApp:
 
     def __init__(
         self,
-        url: list[str],
+        servers: Optional[list[str]] = None,
         js_opts: Optional[dict[str, Any]] = None,
         middlewares: Optional[Sequence] = None,
+        **kwargs,
     ) -> None:
         """
         Create a new NATSApp instance.
         """
-        self.NATS_URL = url
+        self._connection_kwargs = kwargs
+        if servers:
+            self._connection_kwargs["servers"] = servers
+
         self.middlewares = middlewares or []
         self._jetstream_configs = []
         self._push_subscribers = []
@@ -151,14 +155,19 @@ class NATSApp:
             logger.info("NATS connection is closed")
 
         self._nc = NATS()
-        await self._nc.connect(
-            servers=self.NATS_URL,
-            disconnected_cb=disconnected_cb,
-            reconnected_cb=reconnected_cb,
-            error_cb=error_cb,
-            closed_cb=closed_cb,
-            **options,
+
+        connection_kwargs = self._connection_kwargs.copy()
+        connection_kwargs.update(
+            {
+                "disconnected_cb": disconnected_cb,
+                "reconnected_cb": reconnected_cb,
+                "error_cb": error_cb,
+                "closed_cb": closed_cb,
+            }
         )
+        connection_kwargs.update(options)
+
+        await self._nc.connect(**connection_kwargs)
         logger.info("Connected to NATS")
         await self._streams_create_or_update()
         await self.subscribe_all()

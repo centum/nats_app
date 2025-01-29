@@ -234,7 +234,8 @@ class MockClient:
         self._nuid = NUID()
         self._js_pull_subscribers = []
 
-    async def connect(self, servers, **options) -> None:
+    async def connect(self, **options) -> None:
+        servers = options.get("servers", "mock")
         if not isinstance(servers, list):
             servers = servers.split(",")
         self._current_server = servers[0]
