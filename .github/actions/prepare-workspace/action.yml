@@ -43,7 +43,7 @@ runs:
 
     - name: Cache dependencies
       id: cache-deps
-      uses: actions/cache@v2
+      uses: actions/cache@v4
       with:
         path: .venv
         key: venv-${{ inputs.os }}-${{ steps.full-python-version.outputs.version }}-${{ hashFiles('**/poetry.lock') }}
