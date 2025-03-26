@@ -135,7 +135,7 @@ class NATSRouter:
                 PushSubscriptionMeta(
                     subject=self.prefix + m.subject,
                     queue=m.queue,
-                    cb=m.fn,
+                    cb=m.cb,
                     durable=m.durable,
                     stream=m.stream,
                     config=m.config,
@@ -155,7 +155,7 @@ class NATSRouter:
             self.js_pull_subscribers.append(
                 PullSubscriptionMeta(
                     subject=self.prefix + m.subject,
-                    handler=m.fn,
+                    handler=m.handler,
                     durable=m.durable,
                     stream=m.stream,
                     config=m.config,
