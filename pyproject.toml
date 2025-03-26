@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nats-app"
-version = "0.2.1"
+version = "0.2.2"
 description = "NATS App is wrapper client on NATS Connection"
 authors = ["Vadym Statishyn <statishin@gmail.com>"]
 license = "Apache-2.0"
