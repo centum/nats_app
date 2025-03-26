@@ -17,7 +17,12 @@ class NATSRouter:
         self.push_subscribers = []
         self.js_push_subscribers = []
         self.js_pull_subscribers = []
-        self.prefix = prefix
+        prefix = prefix or ""
+        self.prefix = prefix.strip().strip(".")
+
+    def _add_subject(self, subject: str):
+        subject = subject.strip().strip(".")
+        return self.prefix + "." + subject if self.prefix else subject
 
     def push_subscribe(
         self,
@@ -32,7 +37,7 @@ class NATSRouter:
         def wrapper(fn):
             self.push_subscribers.append(
                 SubscriptionMeta(
-                    subject=subject,
+                    subject=self._add_subject(subject),
                     queue=queue,
                     handler=fn,
                     future=future,
@@ -64,7 +69,7 @@ class NATSRouter:
         def wrapper(fn):
             self.js_push_subscribers.append(
                 PushSubscriptionMeta(
-                    subject=subject,
+                    subject=self._add_subject(subject),
                     queue=queue,
                     cb=fn,
                     durable=durable,
@@ -101,7 +106,7 @@ class NATSRouter:
             self.js_pull_subscribers.append(
                 PullSubscriptionMeta(
                     handler=fn,
-                    subject=subject,
+                    subject=self._add_subject(subject),
                     durable=durable,
                     stream=stream,
                     config=config,
@@ -120,7 +125,7 @@ class NATSRouter:
         for m in router.push_subscribers:
             self.push_subscribers.append(
                 SubscriptionMeta(
-                    subject=self.prefix + m.subject,
+                    subject=self._add_subject(m.subject),
                     queue=m.queue,
                     handler=m.handler,
                     future=m.future,
@@ -133,7 +138,7 @@ class NATSRouter:
         for m in router.js_push_subscribers:
             self.js_push_subscribers.append(
                 PushSubscriptionMeta(
-                    subject=self.prefix + m.subject,
+                    subject=self._add_subject(m.subject),
                     queue=m.queue,
                     cb=m.cb,
                     durable=m.durable,
@@ -154,7 +159,7 @@ class NATSRouter:
         for m in router.js_pull_subscribers:
             self.js_pull_subscribers.append(
                 PullSubscriptionMeta(
-                    subject=self.prefix + m.subject,
+                    subject=self._add_subject(m.subject),
                     handler=m.handler,
                     durable=m.durable,
                     stream=m.stream,
