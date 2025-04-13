@@ -1,6 +1,7 @@
 import asyncio
 import random
 import string
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import ParseResult, urlparse
@@ -146,11 +147,14 @@ class MockJetStreamContext(nats.js.JetStreamContext):
     ):
         assert cb is not None, "test sync push push_subscribe not provided"
 
-        stream = self._stream.get(subject) or {}
-        stream_group = stream.get(queue) or {}
-        stream_group[queue] = cb
-        stream[subject] = stream_group
-        self._stream = stream
+        self._stream = self._stream or defaultdict(lambda: defaultdict(list))
+        self._stream[subject][queue].append(cb)
+
+        # stream = self._stream.get(subject) or defaultdict(defaultdict(list))
+        # stream_group = stream.get(queue) or {}
+        # stream_group[queue] = cb
+        # stream[subject] = stream_group
+        # self._stream = stream
 
         return MockSubscriber(self, subject, queue)
 
@@ -176,27 +180,37 @@ class MockJetStreamContext(nats.js.JetStreamContext):
         stream: Optional[str] = None,
         headers: Optional[dict] = None,
     ) -> PubAck:
-        stream = self._stream.get(subject, {})
-        for cb in stream.values():
-            new_inbox = self._nc.new_inbox()
+        groups = self._stream.get(subject, {})
+        ret = None
+        for name, cbs in groups.items():
+            if not name:
+                for cb in cbs:
+                    ret = await self._call_cb(cb, subject, payload, headers)
+            else:
+                cb = random.choice(cbs)
+                ret = await self._call_cb(cb, subject, payload, headers)
+        return ret
 
-            async def _reply(m):
-                pass
+    async def _call_cb(self, cb, subject, payload, headers):
+        new_inbox = self._nc.new_inbox()
 
-            sub_response = await self._nc.subscribe(new_inbox, cb=_reply)
-            try:
-                m = Msg(
-                    subject=subject,
-                    data=payload,
-                    headers=headers,
-                    reply=new_inbox,
-                    _client=self,
-                )
-                await cb(m)
-            finally:
-                await sub_response.unsubscribe()
+        async def _reply(m):
+            pass
 
-            return PubAck.from_response({"stream": subject, "seq": 1})
+        sub_response = await self._nc.subscribe(new_inbox, cb=_reply)
+        try:
+            m = Msg(
+                subject=subject,
+                data=payload,
+                headers=headers,
+                reply=new_inbox,
+                _client=self,
+            )
+            await cb(m)
+        finally:
+            await sub_response.unsubscribe()
+
+        return PubAck.from_response({"stream": subject, "seq": 1})
 
     async def publish_async(
         self,
