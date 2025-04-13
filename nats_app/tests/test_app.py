@@ -180,3 +180,85 @@ async def test_pull_subscription(nc):
     await nc.js.publish("app.subject.validate_echo", b"TEST123")
     assert isinstance(result, bytes)
     assert result == b"TEST123"
+
+
+async def test_pull_subscription_multihandlers_wo_group(nc):
+    result1 = None
+    result2 = None
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", batch=1)
+    async def handler(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result1
+        result1 = msgs[0].data
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", batch=1)
+    async def handler2(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result2
+        result2 = msgs[0].data
+
+    await nc.connect()
+    await nc.js.publish("app.subject.validate_echo", b"TEST123")
+    assert isinstance(result1, bytes)
+    assert result1 == b"TEST123"
+    assert isinstance(result2, bytes)
+    assert result2 == b"TEST123"
+
+
+async def test_pull_subscription_multihandlers_w_one_group(nc):
+    result1 = None
+    result2 = None
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", durable="group1", batch=1)
+    async def handler(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result1
+        result1 = msgs[0].data
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", durable="group1", batch=1)
+    async def handler2(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result2
+        result2 = msgs[0].data
+
+    await nc.connect()
+    await nc.js.publish("app.subject.validate_echo", b"TEST123")
+    assert (result1 is None and result2 is not None) or (result1 is not None and result2 is None)
+    if result1 is not None:
+        assert isinstance(result1, bytes)
+        assert result1 == b"TEST123"
+    else:
+        assert result1 is None
+        assert isinstance(result2, bytes)
+        assert result2 == b"TEST123"
+
+
+async def test_pull_subscription_multihandlers_w_different_group(nc):
+    result1 = None
+    result2 = None
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", durable="group1", batch=1)
+    async def handler(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result1
+        result1 = msgs[0].data
+
+    @nc.js_pull_subscribe("app.subject.validate_echo", durable="group2", batch=1)
+    async def handler2(msgs: list[Msg]):
+        assert isinstance(msgs, list)
+        assert len(msgs) == 1
+        nonlocal result2
+        result2 = msgs[0].data
+
+    await nc.connect()
+    await nc.js.publish("app.subject.validate_echo", b"TEST123")
+    assert isinstance(result1, bytes)
+    assert result1 == b"TEST123"
+    assert isinstance(result2, bytes)
+    assert result2 == b"TEST123"
