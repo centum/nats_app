@@ -72,10 +72,14 @@ class NATS(nats.NATS):
                         msgs = await sub.fetch(batch=r.batch, timeout=r.timeout, heartbeat=r.heartbeat)
                         await r.handler(msgs)
                     except TimeoutError:
-                        logger.info("pull message timeout")
+                        logger.debug(
+                            f"subject={r.subject} stream: {info.stream_name} consumer:{info.name} pull message timeout"
+                        )
                         continue
-                    except Exception as e:
-                        logger.info(f"Process exception: {e}")
+                    except Exception:
+                        logger.exception(
+                            f"subject={r.subject} stream: {info.stream_name} consumer:{info.name} process error"
+                        )
                     await asyncio.sleep(1)
             finally:
                 if pull_task:
