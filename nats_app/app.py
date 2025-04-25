@@ -9,9 +9,9 @@ import nats
 from nats.aio import subscription
 from nats.errors import BadSubscriptionError
 from nats.js import JetStreamContext, api, client
-from nats.js.api import StreamConfig
-from nats.js.client import DEFAULT_JS_SUB_PENDING_BYTES_LIMIT, DEFAULT_JS_SUB_PENDING_MSGS_LIMIT
-from nats.js.errors import NotFoundError
+from nats.js.api import KeyValueConfig, StreamConfig
+from nats.js.client import DEFAULT_JS_SUB_PENDING_BYTES_LIMIT, DEFAULT_JS_SUB_PENDING_MSGS_LIMIT, KV_STREAM_TEMPLATE
+from nats.js.errors import BucketNotFoundError, NotFoundError
 
 from nats_app.errors import default_error_handler
 from nats_app.marshaling import from_bytes, normalize_payload, to_bytes
@@ -103,6 +103,7 @@ class NATSApp:
     _js: Optional[JetStreamContext] = None
     _js_opts: dict[str, Any] = {}
     _jetstream_configs: list[StreamConfig]
+    _kv_configs: list[KeyValueConfig]
     _push_subscribers: list[SubscriptionMeta]
     _js_push_subscribers: list[PushSubscriptionMeta]
     _subscriptions: list[subscription.Subscription] = []
@@ -125,6 +126,7 @@ class NATSApp:
 
         self.middlewares = middlewares or []
         self._jetstream_configs = []
+        self._kv_configs = []
         self._push_subscribers = []
         self._js_push_subscribers = []
         self._js_pull_subscribers = []
@@ -174,6 +176,7 @@ class NATSApp:
         await self._nc.connect(**connection_kwargs)
         logger.info("Connected to NATS")
         await self._streams_create_or_update()
+        await self._kv_create_or_update()
         await self.subscribe_all()
 
     def __getattr__(self, name):
@@ -247,6 +250,50 @@ class NATSApp:
             except NotFoundError:
                 si = await self.js.add_stream(config)
                 logger.info(f"add stream info: {si.as_dict()}")
+
+    async def _kv_create_or_update(self):
+        """Create or update JetStream streams."""
+        for config in self._kv_configs:
+            if config.bucket is None:
+                raise ValueError("nats: kv bucket name is required")
+            try:
+                kv = await self.js.key_value(config.bucket)
+                status = await kv.status()
+                si = status.stream_info
+
+                if si.config.max_value_size != config.max_value_size:
+                    logger.warning(f"can not change max_value_size of kv bucket: {status.bucket}")
+                if si.config.history != config.history:
+                    logger.warning(f"can not change history of kv bucket: {status.bucket}")
+                if si.config.storage != config.storage:
+                    logger.warning(f"can not change storage of kv bucket: {status.bucket}")
+                if si.config.republish != config.republish:
+                    logger.warning(f"can not change republish of kv bucket: {status.bucket}")
+                if si.config.direct != config.direct:
+                    logger.warning(f"can not change direct of kv bucket: {status.bucket}")
+
+                if (
+                    si.config.max_bytes != config.max_bytes
+                    or si.config.max_age != config.ttl
+                    or si.config.replicas != config.replicas
+                    or si.config.placement != config.placement
+                ):
+                    await self.js.update_stream(
+                        name=KV_STREAM_TEMPLATE.format(bucket=config.bucket),
+                        config={
+                            "max_bytes": config.max_bytes,
+                            "max_age": config.ttl,
+                            "replicas": config.replicas,
+                            "placement": config.placement,
+                        },
+                    )
+                    logger.info(f"update kv bucket: {status.bucket}")
+                else:
+                    logger.info(f"unchanged kv bucket: {status.bucket}")
+            except BucketNotFoundError:
+                kv = await self.js.create_key_value(config)
+                status = await kv.status()
+                logger.info(f"create kv bucket: {status.bucket}")
 
     async def _js_pull_subscribe_all(self):
         """Subscribe all jetstream pull subscribers."""
@@ -441,6 +488,9 @@ class NATSApp:
 
             elif isinstance(obj, StreamConfig):
                 self._jetstream_configs.append(obj)
+
+            elif isinstance(obj, KeyValueConfig):
+                self._kv_configs.append(obj)
 
         return _fn
 
