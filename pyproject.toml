@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "nats-app"
-version = "0.2.3"
+version = "0.2.5"
 description = "NATS App is wrapper client on NATS Connection"
 authors = ["Vadym Statishyn <statishin@gmail.com>"]
 license = "Apache-2.0"
@@ -32,7 +32,7 @@ pydantic = "^2"
 fastapi = "^0.115"
 ujson = "^5.10"
 
-[tool.poetry.dev-dependencies]
+[tool.poetry.group.dev.dependencies]
 pytest = "^8"
 pytest-asyncio = "^0"
 pytest-mock = "^3.14.0"
