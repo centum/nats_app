@@ -1,7 +1,8 @@
 import pytest
 from nats.js import JetStreamContext
-from nats.js.api import StreamConfig
-from nats.js.errors import NotFoundError
+from nats.js.api import KeyValueConfig, StreamConfig
+from nats.js.errors import BucketNotFoundError, NotFoundError
+from nats.js.kv import KeyValue
 
 from nats_app.app import NATSApp
 
@@ -108,3 +109,20 @@ async def test_streams_create_or_update_deny_change(mocker):
     mock_js.update_stream.assert_not_called()
     mock_js.add_stream.assert_not_called()
     mock_js.stream_info.assert_called_once_with("test_stream")
+
+
+@pytest.mark.asyncio
+async def test_streams_kv_create_or_update(mocker):
+    nc = NATSApp(url=["nats://localhost:4222"])
+    config = KeyValueConfig(bucket="kv_bucket", ttl=60)
+    nc._kv_configs.append(config)
+
+    mock_js = mocker.Mock(spec=JetStreamContext)
+    mock_js.key_value.side_effect = BucketNotFoundError
+    mock_js.create_key_value.return_value = mocker.Mock(spec=KeyValue)
+    nc._js = mock_js
+
+    await nc._kv_create_or_update()
+
+    mock_js.create_key_value.assert_called_once_with(config)
+    mock_js.key_value.assert_called_once_with("kv_bucket")
