@@ -261,16 +261,10 @@ class NATSApp:
                 status = await kv.status()
                 si = status.stream_info
 
-                if si.config.max_value_size != config.max_value_size:
-                    logger.warning(f"can not change max_value_size of kv bucket: {status.bucket}")
-                if si.config.history != config.history:
-                    logger.warning(f"can not change history of kv bucket: {status.bucket}")
                 if si.config.storage != config.storage:
                     logger.warning(f"can not change storage of kv bucket: {status.bucket}")
                 if si.config.republish != config.republish:
                     logger.warning(f"can not change republish of kv bucket: {status.bucket}")
-                if si.config.direct != config.direct:
-                    logger.warning(f"can not change direct of kv bucket: {status.bucket}")
 
                 if (
                     si.config.max_bytes != config.max_bytes
