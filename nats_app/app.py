@@ -272,15 +272,12 @@ class NATSApp:
                     or si.config.replicas != config.replicas
                     or si.config.placement != config.placement
                 ):
-                    await self.js.update_stream(
-                        name=KV_STREAM_TEMPLATE.format(bucket=config.bucket),
-                        config={
-                            "max_bytes": config.max_bytes,
-                            "max_age": config.ttl,
-                            "replicas": config.replicas,
-                            "placement": config.placement,
-                        },
-                    )
+                    assert si.config.name == KV_STREAM_TEMPLATE.format(bucket=config.bucket)
+                    si.config.max_bytes = config.max_bytes
+                    si.config.max_age = config.ttl
+                    si.config.replicas = config.replicas
+                    si.config.placement = config.placement
+                    await self.js.update_stream(si.config)
                     logger.info(f"update kv bucket: {status.bucket}")
                 else:
                     logger.info(f"unchanged kv bucket: {status.bucket}")
