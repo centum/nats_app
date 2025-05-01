@@ -88,7 +88,7 @@ class NATS(nats.NATS):
 
         pull_task = asyncio.create_task(_task())
         self._js_pull_subscribers_tasks.add(pull_task)
-        logger.info(f"start pull subscription on '{sub.subject}' stream: '{info.stream_name}' consumer: '{info.name}'")
+        logger.info(f"start pull subscription on '{r.subject}' stream: '{info.stream_name}' consumer: '{info.name}'")
 
     async def _js_pull_subscriber_stop(self):
         """Stop all pull subscribers background tasks."""
