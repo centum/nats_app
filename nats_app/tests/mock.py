@@ -247,6 +247,7 @@ class MockClient:
         self._inbox_prefix = bytearray(DEFAULT_INBOX_PREFIX)
         self._nuid = NUID()
         self._js_pull_subscribers = []
+        self._js = None
 
     async def connect(self, **options) -> None:
         servers = options.get("servers", "mock")
@@ -353,22 +354,21 @@ class MockClient:
         *args,
         **kwargs,
     ) -> None:
-        if subject not in self._subscribers:
-            # raise ValueError(f"{subject} is not subscribed")
-            return
-
         async def _publish(cb, subject, payload, headers):
             m = Msg(subject=subject, data=payload, headers=headers, _client=self)
             await cb(m)
 
-        for queue, group in self._subscribers[subject].items():
-            if not queue:
-                for reg in group.values():
+        if subject in self._subscribers:
+            for queue, group in self._subscribers[subject].items():
+                if not queue:
+                    for reg in group.values():
+                        await _publish(reg.handler, subject, payload, headers)
+                else:
+                    reg = random.choice(list(group.values()))
                     await _publish(reg.handler, subject, payload, headers)
-            else:
-                reg = random.choice(list(group.values()))
-                await _publish(reg.handler, subject, payload, headers)
-        return
+
+        elif self._js is not None:
+            await self._js.publish(subject, payload, *args, headers=headers, **kwargs)
 
     @property
     def last_error(self) -> Optional[Exception]:
@@ -403,7 +403,9 @@ class MockClient:
         return False
 
     def jetstream(self, **opts) -> MockJetStreamContext:
-        return MockJetStreamContext(self, **opts)
+        if self._js is None:
+            self._js = MockJetStreamContext(self, **opts)
+        return self._js
 
     async def push_from_pull_subscribe(self, js, r: PullSubscriptionMeta):
         async def _handler(m: Msg):
@@ -415,3 +417,4 @@ class MockClient:
     async def _js_pull_subscriber_stop(self):
         for sub in self._js_pull_subscribers:
             await sub.unsubsctibe()
+        self._js_pull_subscribers = []
