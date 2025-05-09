@@ -341,3 +341,39 @@ async def test_create_queue_with_durable():
     assert queue.storage == StorageType.FILE
     assert queue.durable == durable
     assert queue in app._task_queues
+
+
+@pytest.mark.asyncio
+def test_register_task_queue_single():
+    app = NATSApp()
+    task_queue = TaskQueue(subjects=["subject1"])
+
+    app.register_task_queue(task_queue)
+
+    assert len(app._task_queues) == 1
+    assert app._task_queues[0] == task_queue
+
+
+@pytest.mark.asyncio
+def test_register_task_queue_multiple():
+    app = NATSApp()
+    task_queue1 = TaskQueue(subjects=["subject1"])
+    task_queue2 = TaskQueue(subjects=["subject2"])
+
+    app.register_task_queue(task_queue1, task_queue2)
+
+    assert len(app._task_queues) == 2
+    assert task_queue1 in app._task_queues
+    assert task_queue2 in app._task_queues
+
+
+@pytest.mark.asyncio
+def test_register_task_queue_no_duplicates():
+    app = NATSApp()
+    task_queue = TaskQueue(subjects=["subject1"])
+
+    app.register_task_queue(task_queue)
+    app.register_task_queue(task_queue)  # Register the same queue again
+
+    assert len(app._task_queues) == 2  # Ensure duplicates are allowed
+    assert app._task_queues.count(task_queue) == 2
