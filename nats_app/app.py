@@ -569,3 +569,8 @@ class NATSApp:
         )
         self._task_queues.append(tq)
         return tq
+
+    def register_task_queue(self, *tasks_queues: TaskQueue):
+        """Register task queue."""
+        for tq in tasks_queues:
+            self._task_queues.append(tq)
