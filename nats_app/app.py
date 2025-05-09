@@ -9,7 +9,7 @@ import nats
 from nats.aio import subscription
 from nats.errors import BadSubscriptionError
 from nats.js import JetStreamContext, api, client
-from nats.js.api import KeyValueConfig, StreamConfig
+from nats.js.api import KeyValueConfig, StorageType, StreamConfig
 from nats.js.client import DEFAULT_JS_SUB_PENDING_BYTES_LIMIT, DEFAULT_JS_SUB_PENDING_MSGS_LIMIT, KV_STREAM_TEMPLATE
 from nats.js.errors import BucketNotFoundError, NotFoundError
 
@@ -18,6 +18,7 @@ from nats_app.marshaling import from_bytes, normalize_payload, to_bytes
 from nats_app.meta import PullSubscriptionMeta, PushSubscriptionMeta, SubscriptionMeta
 from nats_app.middlewares.common import errors_handler, responder
 from nats_app.router import NATSRouter
+from nats_app.tasks_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,7 @@ class NATSApp:
         self._js_pull_subscribers = []
         self._subscriptions = []
         self._js_opts = js_opts or {}
+        self._task_queues = []
 
         def _error_handler(m, e):
             return self._error_handler(m, e)
@@ -175,6 +177,7 @@ class NATSApp:
 
         await self._nc.connect(**connection_kwargs)
         logger.info("Connected to NATS")
+        self._bind_task_queue()
         await self._streams_create_or_update()
         await self._kv_create_or_update()
         await self.subscribe_all()
@@ -543,3 +546,26 @@ class NATSApp:
         """Stop all jetstream pull subscribers."""
         if self._nc:
             await self._nc._js_pull_subscriber_stop()
+
+    def _bind_task_queue(self):
+        """Bind task queue."""
+        for tq in self._task_queues:
+            tq.bind(self)
+
+    def create_queue(
+        self,
+        subjects: list[str],
+        stream_name: Optional[str] = None,
+        storage: StorageType = StorageType.FILE,
+        stream_config: Optional[StreamConfig] = None,
+        durable: Optional[str] = None,
+    ) -> TaskQueue:
+        tq = TaskQueue(
+            subjects=subjects,
+            stream_name=stream_name,
+            storage=storage,
+            stream_config=stream_config,
+            durable=durable,
+        )
+        self._task_queues.append(tq)
+        return tq

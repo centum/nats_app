@@ -2,9 +2,13 @@ import asyncio
 from collections import defaultdict
 from typing import Any, Optional
 
+import pytest
 from nats.aio.msg import Msg
+from nats.js.api import StorageType, StreamConfig
 
+from nats_app.app import NATSApp
 from nats_app.middlewares.validation import validate_args
+from nats_app.tasks_queue import TaskQueue
 
 
 async def test_rpc_call(nc):
@@ -262,3 +266,78 @@ async def test_pull_subscription_multihandlers_w_different_group(nc):
     assert result1 == b"TEST123"
     assert isinstance(result2, bytes)
     assert result2 == b"TEST123"
+
+
+@pytest.mark.asyncio
+async def test_create_queue_basic():
+    app = NATSApp()
+    subjects = ["subject1", "subject2"]
+    queue = app.create_queue(subjects=subjects)
+
+    assert isinstance(queue, TaskQueue)
+    assert queue.subjects == subjects
+    assert queue.stream_name is None
+    assert queue.storage == StorageType.FILE
+    assert queue.durable is None
+    assert queue in app._task_queues
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_stream_name():
+    app = NATSApp()
+    subjects = ["subject1"]
+    stream_name = "test_stream"
+    queue = app.create_queue(subjects=subjects, stream_name=stream_name)
+
+    assert isinstance(queue, TaskQueue)
+    assert queue.subjects == subjects
+    assert queue.stream_name == stream_name
+    assert queue.storage == StorageType.FILE
+    assert queue.durable is None
+    assert queue in app._task_queues
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_custom_storage():
+    app = NATSApp()
+    subjects = ["subject1"]
+    storage = StorageType.MEMORY
+    queue = app.create_queue(subjects=subjects, storage=storage)
+
+    assert isinstance(queue, TaskQueue)
+    assert queue.subjects == subjects
+    assert queue.stream_name is None
+    assert queue.storage == storage
+    assert queue.durable is None
+    assert queue in app._task_queues
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_stream_config():
+    app = NATSApp()
+    subjects = ["subject1"]
+    stream_config = StreamConfig(name="test_stream", subjects=["subject2"], storage=StorageType.FILE)
+    queue = app.create_queue(subjects=subjects, stream_config=stream_config)
+
+    assert isinstance(queue, TaskQueue)
+    assert queue.subjects == stream_config.subjects
+    assert queue.stream_name is stream_config.name
+    assert queue.storage == StorageType.FILE
+    assert queue.stream_config == stream_config
+    assert queue.durable is None
+    assert queue in app._task_queues
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_durable():
+    app = NATSApp()
+    subjects = ["subject1"]
+    durable = "durable_name"
+    queue = app.create_queue(subjects=subjects, durable=durable)
+
+    assert isinstance(queue, TaskQueue)
+    assert queue.subjects == subjects
+    assert queue.stream_name is None
+    assert queue.storage == StorageType.FILE
+    assert queue.durable == durable
+    assert queue in app._task_queues
