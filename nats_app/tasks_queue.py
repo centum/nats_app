@@ -56,6 +56,7 @@ class TaskQueue:
         storage: StorageType = StorageType.FILE,
         stream_config: Optional[StreamConfig] = None,
         durable: Optional[str] = None,
+        clean_bad_messages: bool = False,
     ):
         self._nc = None
         self._registered_tasks = {}
@@ -69,6 +70,7 @@ class TaskQueue:
             )
 
         self.durable = durable
+        self.clean_bad_messages = clean_bad_messages
 
     @property
     def stream_name(self):
@@ -198,7 +200,13 @@ class TaskQueue:
             if not msgs:
                 return
             msg = msgs[0]
-            m = MetaTask(**ujson.loads(msg.data))
+            try:
+                m = MetaTask(**ujson.loads(msg.data))
+            except Exception:
+                if self.clean_bad_messages:
+                    logger.warning(f"fail to parse message: {msg.data} - cleaning up")
+                    await msg.ack()
+                    return
             if task_param := task_params.get(m.task):
                 try:
                     logger.info(f"call task={m.task} with args={m.args} kwargs={m.kwargs} ...")
@@ -217,6 +225,15 @@ class TaskQueue:
         )
 
     def _subscribe_batch_messages(self, subject: str, task_params: dict[str, TaskParams]):
+        async def _parse_msg(m: Msg) -> Optional[MetaTask]:
+            try:
+                return MetaTask.from_msg(m)
+            except Exception:
+                if self.clean_bad_messages:
+                    logger.warning(f"fail to parse message: {m.data} - cleaning up")
+                    await m.ack()
+                    return None
+
         tp = list(task_params.values())[0]
 
         @self._nc.js_pull_subscribe(
@@ -231,7 +248,8 @@ class TaskQueue:
             if not msgs:
                 return
 
-            data = [MetaTask.from_msg(msg) for msg in msgs]
+            data = [d for d in [_parse_msg(msg) for msg in msgs] if d is not None]
+
             task_names = set([m.task for m in data])
             if len(task_names) > 1:
                 logger.error(f"batch message received multiple task names: {task_names}")
