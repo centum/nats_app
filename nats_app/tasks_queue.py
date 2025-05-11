@@ -215,7 +215,7 @@ class TaskQueue:
                     await msg.ack()
                 except Exception:
                     logger.exception(f"fail task={m.task} with args={m.args} kwargs={m.kwargs}")
-                    await msg.nak(delay=task_param.fail_dealy or 60)
+                    await msg.nak(delay=task_param.fail_delay or 60)
             else:
                 logger.error(f"delayed task not found: {m.task}")
 
