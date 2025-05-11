@@ -248,7 +248,7 @@ class TaskQueue:
             if not msgs:
                 return
 
-            data = [d for d in [_parse_msg(msg) for msg in msgs] if d is not None]
+            data = [d for d in [await _parse_msg(msg) for msg in msgs] if d is not None]
 
             task_names = set([m.task for m in data])
             if len(task_names) > 1:
