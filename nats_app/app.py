@@ -10,7 +10,7 @@ from nats.aio import subscription
 from nats.errors import BadSubscriptionError
 from nats.js import JetStreamContext, api, client
 from nats.js.api import KeyValueConfig, StorageType, StreamConfig
-from nats.js.client import DEFAULT_JS_SUB_PENDING_BYTES_LIMIT, DEFAULT_JS_SUB_PENDING_MSGS_LIMIT, KV_STREAM_TEMPLATE
+from nats.js.client import KV_STREAM_TEMPLATE
 from nats.js.errors import BucketNotFoundError, NotFoundError
 
 from nats_app.errors import default_error_handler
@@ -176,7 +176,7 @@ class NATSApp:
         connection_kwargs.update(options)
 
         await self._nc.connect(**connection_kwargs)
-        logger.info("Connected to NATS")
+        logger.info(f"Connected to NATS on {self._nc.connected_url.netloc}")
         self._bind_task_queue()
         await self._streams_create_or_update()
         await self._kv_create_or_update()

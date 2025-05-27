@@ -5,11 +5,12 @@ from functools import wraps
 from typing import Callable, Optional
 
 import ujson
-from nats.aio.msg import Msg
+from nats.aio.msg import Msg, MsgAlreadyAckdError
 from nats.js.api import AckPolicy, ConsumerConfig, StorageType, StreamConfig
 from pydantic import BaseModel, PrivateAttr, validate_call
 
 from nats_app.marshaling import normalize_payload
+import contextlib
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,12 @@ class MetaTask(BaseModel):
         return m
 
     async def ack(self) -> None:
-        await self._msg.ack()
+        with contextlib.suppress(MsgAlreadyAckdError):
+            await self._msg.ack()
 
     async def nak(self, delay: int) -> None:
-        await self._msg.nak(delay=delay)
+        with contextlib.suppress(MsgAlreadyAckdError):
+            await self._msg.nak(delay=delay)
 
 
 class TaskParams(BaseModel):
