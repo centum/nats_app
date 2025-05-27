@@ -1,3 +1,4 @@
+import contextlib
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable
@@ -10,7 +11,6 @@ from nats.js.api import AckPolicy, ConsumerConfig, StorageType, StreamConfig
 from pydantic import BaseModel, PrivateAttr, validate_call
 
 from nats_app.marshaling import normalize_payload
-import contextlib
 
 logger = logging.getLogger(__name__)
 
