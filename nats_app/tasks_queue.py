@@ -35,6 +35,35 @@ class MetaTask(BaseModel):
         with contextlib.suppress(MsgAlreadyAckdError):
             await self._msg.nak(delay=delay)
 
+    async def retry(self, delay: int, max_retry: int) -> bool:
+        num_delivered = self.metadata.num_delivered
+        if num_delivered > max_retry:
+            await self.ack()
+            return False
+        else:
+            delay = delay + (num_delivered - 1) * 2
+            await self.nak(delay=self.retry_delay(delay) or delay)
+            return True
+
+    def retry_delay(self, delay: int) -> Optional[int]:
+        return delay + (self.metadata.num_delivered - 1) * 2 if self._msg else None
+
+    @property
+    def header(self) -> Optional[dict[str, str]]:
+        return self._msg.header if self._msg else None
+
+    @property
+    def metadata(self) -> Msg.Metadata:
+        return self._msg.metadata if self._msg else None
+
+    @property
+    def is_acked(self) -> bool:
+        return self._msg.is_acked if self._msg else None
+
+    @property
+    def sid(self) -> int:
+        return self._msg.sid if self._msg else None
+
 
 class TaskParams(BaseModel):
     fn: Callable[..., Awaitable]
@@ -43,7 +72,11 @@ class TaskParams(BaseModel):
     batch: int = 1
     timeout: Optional[int] = None
     consumer_config: Optional[ConsumerConfig] = None
+    max_retry: int = 5
     fail_delay: int = 60
+
+    def is_batch(self) -> bool:
+        return self.batch is not None and self.batch > 1
 
 
 def _get_fn_name(fn):
@@ -179,7 +212,7 @@ class TaskQueue:
             else:
                 batch_messages_tasks[task_param.subject][task_param.fn.task_name] = task_param
         for subject, task_params in single_message_tasks.items():
-            self._subscribe_single_message(subject, task_params)
+            self._subscribe_batch_messages(subject, task_params)
 
         for subject, task_params in batch_messages_tasks.items():
             if len(task_params) > 1:
@@ -193,50 +226,16 @@ class TaskQueue:
                     )
             self._subscribe_batch_messages(subject, task_params)
 
-    def _subscribe_single_message(self, subject: str, task_params: dict[str, TaskParams]):
-        @self._nc.js_pull_subscribe(
-            subject,
-            stream=self.stream_name,
-            durable=self.durable,
-        )
-        async def subscribe(msgs: list[Msg]):
-            if not msgs:
-                return
-            msg = msgs[0]
-            try:
-                m = MetaTask(**ujson.loads(msg.data))
-            except Exception:
-                if self.clean_bad_messages:
-                    logger.warning(f"fail to parse message: {msg.data} - cleaning up")
-                    await msg.ack()
-                    return
-            if task_param := task_params.get(m.task):
-                try:
-                    logger.info(f"call task={m.task} with args={m.args} kwargs={m.kwargs} ...")
-                    result = await task_param.fn(*m.args, **m.kwargs)
-                    logger.info(f"finish task={m.task} with args={m.args} kwargs={m.kwargs} result={result}")
-                    await msg.ack()
-                except Exception:
-                    logger.exception(f"fail task={m.task} with args={m.args} kwargs={m.kwargs}")
-                    await msg.nak(delay=task_param.fail_delay or 60)
-            else:
-                logger.error(f"delayed task not found: {m.task}")
-
-        logger.info(
-            f"connect to nats stream: '{self.stream_name}' on subject: '{subject}' "
-            f"delayed tasks: {list(task_params.keys())}"
-        )
+    async def _parse_msg(self, m: Msg) -> Optional[MetaTask]:
+        try:
+            return MetaTask.from_msg(m)
+        except Exception:
+            if self.clean_bad_messages:
+                logger.warning(f"fail to parse message: {m.data} - cleaning up")
+                await m.ack()
+            return None
 
     def _subscribe_batch_messages(self, subject: str, task_params: dict[str, TaskParams]):
-        async def _parse_msg(m: Msg) -> Optional[MetaTask]:
-            try:
-                return MetaTask.from_msg(m)
-            except Exception:
-                if self.clean_bad_messages:
-                    logger.warning(f"fail to parse message: {m.data} - cleaning up")
-                    await m.ack()
-                    return None
-
         tp = list(task_params.values())[0]
 
         @self._nc.js_pull_subscribe(
@@ -251,7 +250,7 @@ class TaskQueue:
             if not msgs:
                 return
 
-            data = [d for d in [await _parse_msg(msg) for msg in msgs] if d is not None]
+            data = [d for d in [await self._parse_msg(msg) for msg in msgs] if d is not None]
             if not data:
                 return
 
@@ -263,17 +262,40 @@ class TaskQueue:
 
             task_param = task_params.get(task_name)
 
-            params = f"args[{len(data)}]={data[0].model_dump()}..."
+            params = ujson.dumps([{"args": d.args, "kwargs": d.kwargs} for d in data])
             try:
-                logger.info(f"call task='{task_name}' with {params}")
-                result = await task_param.fn(data)
-                logger.info(f"finish task='{task_name}' with {params} result={result}")
-                if tp.consumer_config.ack_policy == AckPolicy.ALL:
+                logger.info(f"call task='{task_name}'({params})")
+                if tp.is_batch():
+                    result = await task_param.fn(data)
+                else:
+                    result = await task_param.fn(*data[0].args, **data[0].kwargs)
+                logger.info(f"finish task='{task_name}'({params}) result={result}")
+                if not tp.is_batch() or tp.consumer_config.ack_policy == AckPolicy.ALL:
                     await msgs[len(msgs) - 1].ack()
             except Exception:
-                logger.exception(f"fail task: {task_name} with {params}")
-                if tp.consumer_config.ack_policy == AckPolicy.ALL:
-                    await msgs[len(msgs) - 1].nak(delay=tp.fail_delay)
+                logger.exception(f"fail task: {task_name}({params})")
+                if not tp.is_batch():
+                    msg = data[0]
+                    num_delivered = msg.metadata.num_delivered
+                    if num_delivered > tp.max_retry:
+                        await msg.ack()
+                        logger.warning(f"stop retry fail task: {task_name}({params}) - reach max retry count")
+                    else:
+                        delay = tp.fail_delay + (num_delivered - 1) * 2
+                        await msg.nak(delay=delay)
+                        logger.warning(f"retry fail task: {task_name}({params}) - "
+                                         f"retry={num_delivered} delay={delay}")
+                else:
+                    if tp.consumer_config.ack_policy == AckPolicy.ALL:
+                        num_delivered = min([d.metadata.num_delivered for d in data])
+                        if num_delivered > tp.max_retry:
+                            await msgs[len(msgs) - 1].ack()
+                            logger.warning(f"stop retry fail task: {task_name}({params}) - reach max retry count")
+                        else:
+                            delay = tp.fail_delay + (num_delivered - 1) * 2
+                            await msgs[len(msgs) - 1].nak(delay=delay)
+                            logger.warning(f"retry fail task: {task_name}({params}) - "
+                                           f"retry={num_delivered} delay={delay}")
 
         logger.info(
             f"connect to nats stream: '{self.stream_name}' on subject: '{subject}' "
