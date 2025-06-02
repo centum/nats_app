@@ -165,6 +165,7 @@ class TaskQueue:
         batch: int = 1,
         timeout: Optional[int] = None,
         ack_policy: AckPolicy = AckPolicy.EXPLICIT,
+        max_retry: int = 5,
         fail_delay: int = 60,
         consumer_config: Optional[ConsumerConfig] = None,
         skip_validate: bool = False,
@@ -184,6 +185,7 @@ class TaskQueue:
                 batch=batch,
                 timeout=timeout,
                 consumer_config=consumer_config if consumer_config else ConsumerConfig(ack_policy=ack_policy),
+                max_retry=max_retry,
                 fail_delay=fail_delay,
             )
 
@@ -283,8 +285,7 @@ class TaskQueue:
                     else:
                         delay = tp.fail_delay + (num_delivered - 1) * 2
                         await msg.nak(delay=delay)
-                        logger.warning(f"retry fail task: {task_name}({params}) - "
-                                         f"retry={num_delivered} delay={delay}")
+                        logger.warning(f"retry fail task: {task_name}({params}) - retry={num_delivered} delay={delay}")
                 else:
                     if tp.consumer_config.ack_policy == AckPolicy.ALL:
                         num_delivered = min([d.metadata.num_delivered for d in data])
@@ -294,8 +295,9 @@ class TaskQueue:
                         else:
                             delay = tp.fail_delay + (num_delivered - 1) * 2
                             await msgs[len(msgs) - 1].nak(delay=delay)
-                            logger.warning(f"retry fail task: {task_name}({params}) - "
-                                           f"retry={num_delivered} delay={delay}")
+                            logger.warning(
+                                f"retry fail task: {task_name}({params}) - retry={num_delivered} delay={delay}"
+                            )
 
         logger.info(
             f"connect to nats stream: '{self.stream_name}' on subject: '{subject}' "
