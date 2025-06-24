@@ -37,7 +37,7 @@ pytest = "^8"
 pytest-asyncio = "^0"
 pytest-mock = "^3.14.0"
 pytest-cov = "^6"
-ruff = "^0.11"
+ruff = ">=0.11,<0.13"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
