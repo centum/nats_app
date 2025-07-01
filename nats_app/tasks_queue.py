@@ -222,19 +222,17 @@ class TaskQueue:
                 if k == "consumer_config":
                     v = hash(frozenset(v.items()))
                 if k in (
-                        "batch",
-                        "timeout",
-                        "consumer_config",
-                        "max_retry",
-                        "fail_delay",
+                    "batch",
+                    "timeout",
+                    "consumer_config",
+                    "max_retry",
+                    "fail_delay",
                 ):
                     data[k].append(v)
 
-        for k, v in data.items():
+        for v in data.values():
             if len(set(v)) > 1:
-                raise ValueError(
-                    f"batch message on subject='{subject}' received multiple task params={task_params}"
-                )
+                raise ValueError(f"batch message on subject='{subject}' received multiple task params={task_params}")
 
     async def _parse_msg(self, m: Msg) -> Optional[MetaTask]:
         try:
@@ -325,6 +323,7 @@ class TaskQueue:
             f"delayed batch tasks: {list(task_params.keys())}"
         )
 
+
 async def send_task_by_subject(nc, subject, *args, **kwargs) -> None:
     if not subject:
         raise ValueError("subject is empty")
@@ -335,6 +334,4 @@ async def send_task_by_subject(nc, subject, *args, **kwargs) -> None:
     )
 
     await nc.publish(subject, meta.model_dump(mode="json"))
-    logger.info(
-        f"pub task message '{meta.task}' to subject '{subject}' with args={meta.args} kwargs={meta.kwargs}"
-    )
+    logger.info(f"pub task message '{meta.task}' to subject '{subject}' with args={meta.args} kwargs={meta.kwargs}")
