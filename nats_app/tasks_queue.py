@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetaTask(BaseModel):
-    task: str
+    task: str | None = None
     args: tuple | list
     kwargs: dict
     _msg: Optional[any] = PrivateAttr()
@@ -74,9 +74,6 @@ class TaskParams(BaseModel):
     consumer_config: Optional[ConsumerConfig] = None
     max_retry: int = 5
     fail_delay: int = 60
-
-    def is_batch(self) -> bool:
-        return self.batch is not None and self.batch > 1
 
 
 def _get_fn_name(fn):
@@ -205,28 +202,39 @@ class TaskQueue:
         self._nc = nc
         nc._jetstream_configs.append(self.stream_config)
 
-        # subscribe to stream
-        single_message_tasks = defaultdict(dict)
-        batch_messages_tasks = defaultdict(dict)
+        # prepare stream subscribes
+        message_tasks = defaultdict(dict)
         for task_param in self._registered_tasks.values():
-            if task_param.batch == 1:
-                single_message_tasks[task_param.subject][task_param.fn.task_name] = task_param
-            else:
-                batch_messages_tasks[task_param.subject][task_param.fn.task_name] = task_param
-        for subject, task_params in single_message_tasks.items():
-            self._subscribe_batch_messages(subject, task_params)
+            message_tasks[task_param.subject][task_param.fn.task_name] = task_param
 
-        for subject, task_params in batch_messages_tasks.items():
-            if len(task_params) > 1:
-                batch = set([t.batch for t in task_params])
-                timeout = set([t.timeout for t in task_params])
-                ack_policy = set([t.consumer_config.ack_policy for t in task_params])
-                fail_delay = set([t.fail_delay for t in task_params])
-                if len(batch) > 1 or len(timeout) > 1 or len(ack_policy) > 1 or len(fail_delay) > 1:
-                    raise ValueError(
-                        f"batch message on subject='{subject}' received multiple task params={task_params}"
-                    )
-            self._subscribe_batch_messages(subject, task_params)
+        # subscribe to stream message
+        for subject, task_params in message_tasks.items():
+            self._is_valid_multi_params(subject, task_params)
+            self._subscribe_on_jetstream(subject, task_params)
+
+    @classmethod
+    def _is_valid_multi_params(cls, subject: str, task_params: dict[str, TaskParams]):
+        if len(task_params) == 1:
+            return
+        data = defaultdict(list)
+        for tp in task_params.values():
+            for k, v in tp.model_dump().items():
+                if k == "consumer_config":
+                    v = hash(frozenset(v.items()))
+                if k in (
+                        "batch",
+                        "timeout",
+                        "consumer_config",
+                        "max_retry",
+                        "fail_delay",
+                ):
+                    data[k].append(v)
+
+        for k, v in data.items():
+            if len(set(v)) > 1:
+                raise ValueError(
+                    f"batch message on subject='{subject}' received multiple task params={task_params}"
+                )
 
     async def _parse_msg(self, m: Msg) -> Optional[MetaTask]:
         try:
@@ -237,8 +245,9 @@ class TaskQueue:
                 await m.ack()
             return None
 
-    def _subscribe_batch_messages(self, subject: str, task_params: dict[str, TaskParams]):
+    def _subscribe_on_jetstream(self, subject: str, task_params: dict[str, TaskParams]):
         tp = list(task_params.values())[0]
+        is_batch = tp.batch is not None and tp.batch > 1
 
         @self._nc.js_pull_subscribe(
             subject,
@@ -260,40 +269,52 @@ class TaskQueue:
             if len(task_names) > 1:
                 logger.error(f"batch message received multiple task names: {task_names}")
                 return
+
             task_name = data[0].task
 
-            task_param = task_params.get(task_name)
+            if task_name:
+                task_param = task_params.get(task_name)
+            elif len(task_params) == 1:
+                task_param = tp
+            else:
+                task_param = None
+
+            if not task_param:
+                logger.error(f"error: task params not for found for message: {data}")
+                return
 
             params = ujson.dumps([{"args": d.args, "kwargs": d.kwargs} for d in data])
             try:
                 logger.info(f"call task='{task_name}'({params})")
-                if tp.is_batch():
+                if is_batch:
                     result = await task_param.fn(data)
                 else:
                     result = await task_param.fn(*data[0].args, **data[0].kwargs)
                 logger.info(f"finish task='{task_name}'({params}) result={result}")
-                if not tp.is_batch() or tp.consumer_config.ack_policy == AckPolicy.ALL:
+                if not is_batch or tp.consumer_config.ack_policy == AckPolicy.ALL:
                     await msgs[len(msgs) - 1].ack()
+
             except Exception:
                 logger.exception(f"fail task: {task_name}({params})")
-                if not tp.is_batch():
+                if not is_batch:
                     msg = data[0]
                     num_delivered = msg.metadata.num_delivered
-                    if num_delivered > tp.max_retry:
+                    if num_delivered > task_param.max_retry:
                         await msg.ack()
                         logger.warning(f"stop retry fail task: {task_name}({params}) - reach max retry count")
                     else:
-                        delay = tp.fail_delay + (num_delivered - 1) * 2
+                        delay = task_param.fail_delay + (num_delivered - 1) * 2
                         await msg.nak(delay=delay)
                         logger.warning(f"retry fail task: {task_name}({params}) - retry={num_delivered} delay={delay}")
+
                 else:
                     if tp.consumer_config.ack_policy == AckPolicy.ALL:
                         num_delivered = min([d.metadata.num_delivered for d in data])
-                        if num_delivered > tp.max_retry:
+                        if num_delivered > task_param.max_retry:
                             await msgs[len(msgs) - 1].ack()
                             logger.warning(f"stop retry fail task: {task_name}({params}) - reach max retry count")
                         else:
-                            delay = tp.fail_delay + (num_delivered - 1) * 2
+                            delay = task_param.fail_delay + (num_delivered - 1) * 2
                             await msgs[len(msgs) - 1].nak(delay=delay)
                             logger.warning(
                                 f"retry fail task: {task_name}({params}) - retry={num_delivered} delay={delay}"
@@ -303,3 +324,17 @@ class TaskQueue:
             f"connect to nats stream: '{self.stream_name}' on subject: '{subject}' "
             f"delayed batch tasks: {list(task_params.keys())}"
         )
+
+async def send_task_by_subject(nc, subject, *args, **kwargs) -> None:
+    if not subject:
+        raise ValueError("subject is empty")
+
+    meta = MetaTask(
+        args=[normalize_payload(v) for v in args],
+        kwargs={k: normalize_payload(v) for k, v in kwargs.items()},
+    )
+
+    await nc.publish(subject, meta.model_dump(mode="json"))
+    logger.info(
+        f"pub task message '{meta.task}' to subject '{subject}' with args={meta.args} kwargs={meta.kwargs}"
+    )

@@ -2,9 +2,9 @@ import json
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from nats.js.api import AckPolicy, ConsumerConfig, StorageType, StreamConfig
+from nats.js.api import StorageType, StreamConfig
 
-from nats_app.tasks_queue import MetaTask, TaskParams, TaskQueue
+from nats_app.tasks_queue import MetaTask, TaskParams, TaskQueue, send_task_by_subject
 
 
 @pytest.fixture
@@ -112,7 +112,7 @@ async def test_subscribe_single_message(task_queue, mock_nc):
 
 @pytest.mark.asyncio
 async def test_subscribe_batch_messages(task_queue, mock_nc):
-    """Test the _subscribe_batch_messages method."""
+    """Test the _subscribe_on_jetstream method."""
 
     @task_queue.task(subject="test.subject.task", batch=10)
     async def sample_task(data):
@@ -120,3 +120,32 @@ async def test_subscribe_batch_messages(task_queue, mock_nc):
 
     task_queue.bind(mock_nc)
     mock_nc.js_pull_subscribe.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_send_task_by_subject_valid(mock_nc):
+    """Test send_task_by_subject with valid data."""
+    subject = "test.subject.task"
+    mock_nc.publish = AsyncMock()
+
+    await send_task_by_subject(mock_nc, subject, 1, key="value")
+    mock_nc.publish.assert_called_once()
+    args, kwargs = mock_nc.publish.call_args
+    assert args[0] == subject
+    assert "task" in args[1]
+    assert "args" in args[1]
+    assert "kwargs" in args[1]
+
+@pytest.mark.asyncio
+async def test_send_task_by_subject_invalid_subject(mock_nc):
+    """Test send_task_by_subject with an invalid subject."""
+    with pytest.raises(ValueError):
+        await send_task_by_subject(mock_nc, "", 1, key="value")
+
+@pytest.mark.asyncio
+async def test_send_task_by_subject_error_handling(mock_nc):
+    """Test send_task_by_subject handles publish errors."""
+    subject = "test.subject.task"
+    mock_nc.publish = AsyncMock(side_effect=Exception("Publish Error"))
+
+    with pytest.raises(Exception, match="Publish Error"):
+        await send_task_by_subject(mock_nc, subject, 1, key="value")
