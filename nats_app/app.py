@@ -71,7 +71,8 @@ class NATS(nats.NATS):
                 while True:
                     try:
                         msgs = await sub.fetch(batch=r.batch, timeout=r.timeout, heartbeat=r.heartbeat)
-                        await r.handler(msgs)
+                        if msgs:
+                            await r.handler(msgs)
                     except TimeoutError:
                         logger.debug(
                             f"subject={r.subject} stream: {info.stream_name} consumer:{info.name} pull message timeout"

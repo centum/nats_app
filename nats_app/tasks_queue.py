@@ -244,7 +244,8 @@ class TaskQueue:
             return None
 
     def _subscribe_on_jetstream(self, subject: str, task_params: dict[str, TaskParams]):
-        tp = list(task_params.values())[0]
+        task_name_def = list(task_params.keys())[0]
+        tp = task_params[task_name_def]
         is_batch = tp.batch is not None and tp.batch > 1
 
         @self._nc.js_pull_subscribe(
@@ -259,28 +260,35 @@ class TaskQueue:
             if not msgs:
                 return
 
-            data = [d for d in [await self._parse_msg(msg) for msg in msgs] if d is not None]
+            data = []
+            for msg in msgs:
+                d = await self._parse_msg(msg)
+                if d is not None:
+                    data.append(d)
+                else:
+                    logger.error(f"drop message on subject: {msg.subject} - wrong input params: {msg.data}")
+                    await msg.ack()
+
             if not data:
                 return
 
-            task_names = set([m.task for m in data])
+            grouped_data = defaultdict(list)
+            task_names = set([m.task for m in data])  # Group by task_name -> list[data]
             if len(task_names) > 1:
-                logger.error(f"batch message received multiple task names: {task_names}")
-                return
-
-            task_name = data[0].task
-
-            if task_name:
-                task_param = task_params.get(task_name)
-            elif len(task_params) == 1:
-                task_param = tp
+                if is_batch:
+                    await data[len(data) - 1].ack()
+                    logger.error(f"batch message received multiple task names: {task_names}")
+                    return
+                for d in data:
+                    grouped_data[d.task or task_name_def].append(d)
             else:
-                task_param = None
+                grouped_data[data[0].task or task_name_def] = data
 
-            if not task_param:
-                logger.error(f"error: task params not for found for message: {data}")
-                return
+            for task_name, task_data in grouped_data.items():
+                task_param = task_params.get(task_name)
+                await _process_task(task_name, task_param, task_data)
 
+        async def _process_task(task_name: str, task_param: TaskParams, data: list[MetaTask]):
             params = ujson.dumps([{"args": d.args, "kwargs": d.kwargs} for d in data])
             try:
                 logger.info(f"call task='{task_name}'({params})")
@@ -288,9 +296,11 @@ class TaskQueue:
                     result = await task_param.fn(data)
                 else:
                     result = await task_param.fn(*data[0].args, **data[0].kwargs)
-                logger.info(f"finish task='{task_name}'({params}) result={result}")
+
                 if not is_batch or tp.consumer_config.ack_policy == AckPolicy.ALL:
-                    await msgs[len(msgs) - 1].ack()
+                    await data[len(data) - 1].ack()
+
+                logger.info(f"finish task='{task_name}'({params}) result={result}")
 
             except Exception:
                 logger.exception(f"fail task: {task_name}({params})")
@@ -309,11 +319,11 @@ class TaskQueue:
                     if tp.consumer_config.ack_policy == AckPolicy.ALL:
                         num_delivered = min([d.metadata.num_delivered for d in data])
                         if num_delivered > task_param.max_retry:
-                            await msgs[len(msgs) - 1].ack()
+                            await data[len(data) - 1].ack()
                             logger.warning(f"stop retry fail task: {task_name}({params}) - reach max retry count")
                         else:
                             delay = task_param.fail_delay + (num_delivered - 1) * 2
-                            await msgs[len(msgs) - 1].nak(delay=delay)
+                            await data[len(data) - 1].nak(delay=delay)
                             logger.warning(
                                 f"retry fail task: {task_name}({params}) - retry={num_delivered} delay={delay}"
                             )
