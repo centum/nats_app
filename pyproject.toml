@@ -29,7 +29,7 @@ packages = [
 python = "^3.12"
 nats-py = "^2.9"
 pydantic = "^2"
-fastapi = "^0.115"
+fastapi = ">=0.115,<0.117"
 ujson = "^5.10"
 
 [tool.poetry.group.dev.dependencies]
