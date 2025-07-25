@@ -84,10 +84,10 @@ class TaskQueue:
     def __init__(
         self,
         *,
-        subjects: list[str],
+        stream_config: Optional[StreamConfig] = None,
+        subjects: Optional[list[str]] = None,
         stream_name: Optional[str] = None,
         storage: StorageType = StorageType.FILE,
-        stream_config: Optional[StreamConfig] = None,
         durable: Optional[str] = None,
         clean_bad_messages: bool = False,
     ):
@@ -161,10 +161,12 @@ class TaskQueue:
         *,
         batch: int = 1,
         timeout: Optional[int] = None,
+        consumer_config: Optional[ConsumerConfig] = None,
         ack_policy: AckPolicy = AckPolicy.EXPLICIT,
+        ack_wait: Optional[float] = None,
+        backoff: Optional[list[float]] = None, # in seconds, overrides ack_wait
         max_retry: int = 5,
         fail_delay: int = 60,
-        consumer_config: Optional[ConsumerConfig] = None,
         skip_validate: bool = False,
     ):
         def wrapper(fn):
@@ -175,13 +177,28 @@ class TaskQueue:
             fn.subject = self._get_subject(subject)
             fn.delay = self._set_delay(fn.task_name, fn.subject)
 
+            consumer_config_prep = consumer_config
+            if not consumer_config_prep:
+                consumer_config_prep = ConsumerConfig(
+                    num_replicas=self.stream_config.num_replicas,
+                    ack_policy=ack_policy,
+                    ack_wait=ack_wait,
+                    backoff=backoff,
+                )
+            if self.stream_config.num_replicas != consumer_config_prep.num_replicas:
+                logger.warning(
+                    f"{self.stream_config.name}: num replicas stream config {self.stream_config.num_replicas} "
+                    f"is not equal to consumer config {consumer_config_prep.num_replicas}"
+                )
+                consumer_config.num_replicas = self.stream_config.num_replicas
+
             self._registered_tasks[fn.task_name] = TaskParams(
                 fn=fn,
                 skip_validate=skip_validate,
                 subject=fn.subject,
                 batch=batch,
                 timeout=timeout,
-                consumer_config=consumer_config if consumer_config else ConsumerConfig(ack_policy=ack_policy),
+                consumer_config=consumer_config_prep,
                 max_retry=max_retry,
                 fail_delay=fail_delay,
             )
@@ -329,8 +346,8 @@ class TaskQueue:
                             )
 
         logger.info(
-            f"connect to nats stream: '{self.stream_name}' on subject: '{subject}' "
-            f"delayed batch tasks: {list(task_params.keys())}"
+            f"register consumer '{self.durable}' durable '{self.durable}' "
+            f"on stream '{self.stream_name}' subject: '{subject}' with delayed tasks: {list(task_params.keys())}"
         )
 
 
