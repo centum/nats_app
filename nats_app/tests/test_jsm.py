@@ -91,27 +91,6 @@ async def test_streams_create_or_update_no_change(mocker):
 
 
 @pytest.mark.asyncio
-async def test_streams_create_or_update_deny_change(mocker):
-    nc = NATSApp(url=["nats://localhost:4222"])
-    config = StreamConfig(name="test_stream", subjects=["foo"])
-    nc._jetstream_configs.append(config)
-
-    mock_js = mocker.Mock(spec=JetStreamContext)
-    mock_js.stream_info.return_value = mocker.Mock(config=config)
-    nc._js = mock_js
-
-    mocker.patch.object(NATSApp, "_is_equal", side_effect=[False, True])
-    mocker.patch.object(NATSApp, "_get_change_dict", return_value={"name": {"old": "test_stream", "new": "new_stream"}})
-
-    with pytest.raises(ValueError, match="nats: stream config params .* deny change"):
-        await nc._streams_create_or_update()
-
-    mock_js.update_stream.assert_not_called()
-    mock_js.add_stream.assert_not_called()
-    mock_js.stream_info.assert_called_once_with("test_stream")
-
-
-@pytest.mark.asyncio
 async def test_streams_kv_create_or_update(mocker):
     nc = NATSApp(url=["nats://localhost:4222"])
     config = KeyValueConfig(bucket="kv_bucket", ttl=60)

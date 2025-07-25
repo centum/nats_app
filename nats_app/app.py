@@ -22,24 +22,6 @@ from nats_app.tasks_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 
-JS_DENY_CHANGE_PARAMS = ("name", "num_replicas", "sealed")
-
-JS_ALLOWED_CHANGE_PARAMS = (
-    "subjects",
-    "max_consumers",
-    "max_msgs",
-    "max_bytes",
-    "max_age",
-    "storage",
-    "retention",
-    "discard",
-    "max_msg_size",
-    "duplicate_window",
-    "allow_rollup_hdrs",
-    "deny_delete",
-    "deny_purge",
-)
-
 
 class NATS(nats.NATS):
     """NATS client is proxy-class with additional features."""
@@ -61,6 +43,8 @@ class NATS(nats.NATS):
                 inbox_prefix=r.inbox_prefix,
             )
             info = await sub.consumer_info()
+            _i_msg = (f"pull consumer '{info.name}' durable: {info.config.durable_name} "
+                      f"on subject '{info.config.filter_subject}' of stream: '{info.stream_name}'")
         except NotFoundError as e:
             raise ValueError(f"stream '{r.stream}' not found") from e
 
@@ -74,23 +58,19 @@ class NATS(nats.NATS):
                         if msgs:
                             await r.handler(msgs)
                     except TimeoutError:
-                        logger.debug(
-                            f"subject={r.subject} stream: {info.stream_name} consumer:{info.name} pull message timeout"
-                        )
+                        logger.debug(f"fetch message timeout {_i_msg}")
                         continue
                     except Exception:
-                        logger.exception(
-                            f"subject={r.subject} stream: {info.stream_name} consumer:{info.name} process error"
-                        )
+                        logger.exception(f"process error {_i_msg}")
                     await asyncio.sleep(1)
             finally:
                 if pull_task:
                     self._js_pull_subscribers_tasks.remove(pull_task)
-                logger.info(f"stop pull subscription on stream: {info.stream_name} consumer:{info.name}")
+                logger.info(f"stop {_i_msg}")
 
         pull_task = asyncio.create_task(_task())
         self._js_pull_subscribers_tasks.add(pull_task)
-        logger.info(f"start pull subscription on '{r.subject}' stream: '{info.stream_name}' consumer: '{info.name}'")
+        logger.info(f"start {_i_msg}")
 
     async def _js_pull_subscriber_stop(self):
         """Stop all pull subscribers background tasks."""
@@ -229,31 +209,28 @@ class NATSApp:
             if new.get(n) is not None and exist.get(n) != new.get(n)
         }
 
+    @classmethod
+    def _is_stream_config_equal(cls, config1, config2):
+        """Compare JetStream streams."""
+        exist = cls._stream_config_dict(config1)
+        new = cls._stream_config_dict(config2)
+        return all([exist.get(n) == new.get(n) for n, v in new.items() if v is not None])
+
     async def _streams_create_or_update(self):
         """Create or update JetStream streams."""
         for config in self._jetstream_configs:
             if config.name is None:
                 raise ValueError("nats: stream name is required")
             try:
-                si = await self.js.stream_info(config.name)
-                exist = self._stream_config_dict(si.config)
-                new = self._stream_config_dict(config)
-
-                if not self._is_equal(exist, new, JS_DENY_CHANGE_PARAMS):
-                    change = self._get_change_dict(exist, new, JS_DENY_CHANGE_PARAMS)
-                    logger.error(f"deny update stream {change}")
-                    raise ValueError(f"nats: stream config params {JS_DENY_CHANGE_PARAMS} deny change")
-
-                if not self._is_equal(exist, new, JS_ALLOWED_CHANGE_PARAMS):
-                    change = self._get_change_dict(exist, new, JS_ALLOWED_CHANGE_PARAMS)
-                    si = await self.js.update_stream(config)
-                    logger.info(f"update stream {change} after stream info: {si.as_dict()}")
-                else:
-                    logger.info(f"unchanged stream: {config.name}")
-
+                exist_si = await self.js.stream_info(config.name)
+                if self._is_stream_config_equal(exist_si.config, config):
+                    logger.info(f"skip update stream '{config.name}' current config: {exist_si.as_dict()}")
+                    continue
+                si = await self.js.update_stream(config)
+                logger.info(f"update stream '{config.name}' current config: {si.as_dict()}")
             except NotFoundError:
                 si = await self.js.add_stream(config)
-                logger.info(f"add stream info: {si.as_dict()}")
+                logger.info(f"add stream '{config.name}' current config: {si.as_dict()}")
 
     async def _kv_create_or_update(self):
         """Create or update JetStream streams."""
