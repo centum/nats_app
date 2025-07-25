@@ -43,8 +43,10 @@ class NATS(nats.NATS):
                 inbox_prefix=r.inbox_prefix,
             )
             info = await sub.consumer_info()
-            _i_msg = (f"pull consumer '{info.name}' durable: {info.config.durable_name} "
-                      f"on subject '{info.config.filter_subject}' of stream: '{info.stream_name}'")
+            _i_msg = (
+                f"pull consumer '{info.name}' durable: {info.config.durable_name} "
+                f"on subject '{info.config.filter_subject}' of stream: '{info.stream_name}'"
+            )
         except NotFoundError as e:
             raise ValueError(f"stream '{r.stream}' not found") from e
 
@@ -226,11 +228,13 @@ class NATSApp:
                 if self._is_stream_config_equal(exist_si.config, config):
                     logger.info(f"skip update stream '{config.name}' current config: {exist_si.as_dict()}")
                     continue
+                logger.info(f"start update stream '{config.name}'")
                 si = await self.js.update_stream(config)
-                logger.info(f"update stream '{config.name}' current config: {si.as_dict()}")
+                logger.info(f"stream updated '{config.name}' current config: {si.as_dict()}")
             except NotFoundError:
+                logger.info(f"start add stream '{config.name}'")
                 si = await self.js.add_stream(config)
-                logger.info(f"add stream '{config.name}' current config: {si.as_dict()}")
+                logger.info(f"stream added '{config.name}' current config: {si.as_dict()}")
 
     async def _kv_create_or_update(self):
         """Create or update JetStream streams."""
