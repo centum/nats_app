@@ -83,6 +83,8 @@ class NATS(nats.NATS):
             await sub.unsubscribe()
 
     async def _js_pull_subscriber_cancel(self):
+        if not self._js_pull_subscribers_tasks:
+            return
         logger.info(f"waiting for {len(self._js_pull_subscribers_tasks)} tasks, timeout={self.SHUTDOWN_TIMEOUT}s")
         done, pending = await asyncio.wait(self._js_pull_subscribers_tasks, timeout=self.SHUTDOWN_TIMEOUT)
 
