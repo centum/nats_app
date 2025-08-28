@@ -80,7 +80,7 @@ class NATS(nats.NATS):
         """Stop all pull subscribers background tasks."""
         # unsubscribe all pull tasks
         for sub in self._js_pull_subscribers_tasks.values():
-            await sub.drain()
+            await sub.unsubscribe()
 
     async def _js_pull_subscriber_cancel(self):
         logger.info(f"waiting for {len(self._js_pull_subscribers_tasks)} tasks, timeout={self.SHUTDOWN_TIMEOUT}s")
