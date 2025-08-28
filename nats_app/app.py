@@ -26,9 +26,11 @@ logger = logging.getLogger(__name__)
 class NATS(nats.NATS):
     """NATS client is proxy-class with additional features."""
 
+    SHUTDOWN_TIMEOUT = 30  # seconds
+
     def __init__(self) -> None:
         super().__init__()
-        self._js_pull_subscribers_tasks = set()
+        self._js_pull_subscribers_tasks = dict()
 
     async def push_from_pull_subscribe(self, js, r: PullSubscriptionMeta):
         """Create a pull subscription handler and run it in background."""
@@ -67,18 +69,31 @@ class NATS(nats.NATS):
                     await asyncio.sleep(1)
             finally:
                 if pull_task:
-                    self._js_pull_subscribers_tasks.remove(pull_task)
+                    self._js_pull_subscribers_tasks.pop(pull_task, None)
                 logger.info(f"stop {_i_msg}")
 
         pull_task = asyncio.create_task(_task())
-        self._js_pull_subscribers_tasks.add(pull_task)
+        self._js_pull_subscribers_tasks[pull_task] = sub
         logger.info(f"start {_i_msg}")
 
     async def _js_pull_subscriber_stop(self):
         """Stop all pull subscribers background tasks."""
-        for task in self._js_pull_subscribers_tasks:
-            task.cancel()
-        self._js_pull_subscribers_tasks = set()
+        # unsubscribe all pull tasks
+        for sub in self._js_pull_subscribers_tasks.values():
+            await sub.drain()
+
+    async def _js_pull_subscriber_cancel(self):
+        logger.info(f"waiting for {len(self._js_pull_subscribers_tasks)} tasks, timeout={self.SHUTDOWN_TIMEOUT}s")
+        done, pending = await asyncio.wait(self._js_pull_subscribers_tasks, timeout=self.SHUTDOWN_TIMEOUT)
+
+        if pending:
+            logger.info(f"after waiting {len(pending)} tasks not finished, cancelling...")
+            for task in pending:
+                task.cancel()
+            # wait cancel
+            await asyncio.gather(*pending, return_exceptions=True)
+
+        self._js_pull_subscribers_tasks.clear()
 
 
 class NATSApp:
@@ -132,7 +147,8 @@ class NATSApp:
 
         async def disconnected_cb():
             logger.info("NATS disconnected")
-            await self._js_pull_subscriber_stop()
+            if self._nc:
+                await self._nc._js_pull_subscriber_cancel()
 
         async def reconnected_cb():
             logger.info(f"NATS reconnected {self._nc.connected_url.netloc}")
@@ -177,17 +193,18 @@ class NATSApp:
 
     async def unsubscribe_all(self):
         """Unsubscribe all subscriptions."""
-        await self._js_pull_subscriber_stop()
         if self._nc and not self._nc.is_closed:
             for subscriber in self._subscriptions:
                 try:
                     if not subscriber._closed:
                         await subscriber.drain()
-                    if not subscriber._closed:
-                        await subscriber.unsubscribe()
+                    # if not subscriber._closed:
+                    #     await subscriber.unsubscribe()
                 except BadSubscriptionError as e:
                     raise ValueError(f"nats: invalid subscription: {subscriber.subject}") from e
+            await self._js_pull_subscriber_stop()
         self._subscriptions = []
+        await self._nc._js_pull_subscriber_cancel()
 
     @classmethod
     def _stream_config_dict(cls, config: StreamConfig) -> dict:
@@ -226,15 +243,18 @@ class NATSApp:
             try:
                 exist_si = await self.js.stream_info(config.name)
                 if self._is_stream_config_equal(exist_si.config, config):
-                    logger.info(f"skip update stream '{config.name}' current config: {exist_si.as_dict()}")
+                    logger.debug(f"skip update stream '{config.name}'")
+                    logger.debug(f"stream '{config.name}' config: {exist_si.as_dict()}")
                     continue
                 logger.info(f"start update stream '{config.name}'")
                 si = await self.js.update_stream(config)
-                logger.info(f"stream updated '{config.name}' current config: {si.as_dict()}")
+                logger.info(f"stream updated '{config.name}'")
+                logger.info(f"config: {si.as_dict()}")
             except NotFoundError:
-                logger.info(f"start add stream '{config.name}'")
+                logger.info(f"create stream '{config.name}'")
                 si = await self.js.add_stream(config)
-                logger.info(f"stream added '{config.name}' current config: {si.as_dict()}")
+                logger.info(f"stream added '{config.name}'")
+                logger.info(f"config: {si.as_dict()}")
 
     async def _kv_create_or_update(self):
         """Create or update JetStream streams."""

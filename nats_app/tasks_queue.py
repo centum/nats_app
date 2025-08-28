@@ -164,7 +164,7 @@ class TaskQueue:
         consumer_config: Optional[ConsumerConfig] = None,
         ack_policy: AckPolicy = AckPolicy.EXPLICIT,
         ack_wait: Optional[float] = None,
-        backoff: Optional[list[float]] = None, # in seconds, overrides ack_wait
+        backoff: Optional[list[float]] = None,  # in seconds, overrides ack_wait
         max_retry: int = 5,
         fail_delay: int = 60,
         skip_validate: bool = False,
@@ -203,7 +203,7 @@ class TaskQueue:
                 fail_delay=fail_delay,
             )
 
-            logger.info(f"register delayed task: {fn.task_name}")
+            logger.debug(f"register delayed task: {fn.task_name}")
 
             @wraps(fn)
             async def wrap(*args, **kwargs):
