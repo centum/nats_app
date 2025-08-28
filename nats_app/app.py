@@ -206,7 +206,8 @@ class NATSApp:
                     raise ValueError(f"nats: invalid subscription: {subscriber.subject}") from e
             await self._js_pull_subscriber_stop()
         self._subscriptions = []
-        await self._nc._js_pull_subscriber_cancel()
+        if self._nc:
+            await self._nc._js_pull_subscriber_cancel()
 
     @classmethod
     def _stream_config_dict(cls, config: StreamConfig) -> dict:
