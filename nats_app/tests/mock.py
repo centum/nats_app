@@ -418,3 +418,6 @@ class MockClient:
         for sub in self._js_pull_subscribers:
             await sub.unsubsctibe()
         self._js_pull_subscribers = []
+
+    async def _js_pull_subscriber_cancel(self):
+        pass
