@@ -110,6 +110,7 @@ class NATSApp:
     _subscriptions: list[subscription.Subscription] = []
     _js_pull_subscribers_tasks: set[asyncio.Task] = set()
     middlewares: Optional[list]
+    _skip_consume: bool = False
 
     def __init__(
         self,
@@ -134,6 +135,7 @@ class NATSApp:
         self._subscriptions = []
         self._js_opts = js_opts or {}
         self._task_queues = []
+        self._skip_consume = False
 
         def _error_handler(m, e):
             return self._error_handler(m, e)
@@ -147,6 +149,8 @@ class NATSApp:
     async def connect(self, **options):
         """Connect to NATS server."""
 
+        self._skip_consume = options.pop("skip_consume", False)
+
         async def disconnected_cb():
             logger.info("NATS disconnected")
             if self._nc:
@@ -154,7 +158,8 @@ class NATSApp:
 
         async def reconnected_cb():
             logger.info(f"NATS reconnected {self._nc.connected_url.netloc}")
-            await self._js_pull_subscribe_all()
+            if not self._skip_consume:
+                await self._js_pull_subscribe_all()
             logger.info("NATS resubscribe")
 
         async def error_cb(e):
@@ -181,7 +186,10 @@ class NATSApp:
         self._bind_task_queue()
         await self._streams_create_or_update()
         await self._kv_create_or_update()
-        await self.subscribe_all()
+        await self._push_subscribe_all()
+        if not self._skip_consume:
+            await self._js_push_subscribe_all()
+            await self._js_pull_subscribe_all()
 
     def __getattr__(self, name):
         return getattr(self._nc, name)
@@ -294,20 +302,19 @@ class NATSApp:
                 status = await kv.status()
                 logger.info(f"create kv bucket: {status.bucket}")
 
-    async def _js_pull_subscribe_all(self):
-        """Subscribe all jetstream pull subscribers."""
-        for r in self._js_pull_subscribers:
-            await self._register_js_pull_subscriber(r)
-
-    async def subscribe_all(self):
+    async def _push_subscribe_all(self):
         """Subscribe all subscribers."""
         for r in self._push_subscribers:
             await self._register_handler(r)
 
+    async def _js_push_subscribe_all(self):
         for r in self._js_push_subscribers:
             await self._register_js_push_subscriber(r)
 
-        await self._js_pull_subscribe_all()
+    async def _js_pull_subscribe_all(self):
+        """Subscribe all jetstream pull subscribers."""
+        for r in self._js_pull_subscribers:
+            await self._register_js_pull_subscriber(r)
 
     async def close(self):
         """Close NATS connection."""
