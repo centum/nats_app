@@ -104,6 +104,8 @@ class TaskQueue:
 
         self.durable = durable
         self.clean_bad_messages = clean_bad_messages
+        self.tasks_processed = 0
+        self.tasks_failed = 0
 
     @property
     def stream_name(self):
@@ -317,9 +319,11 @@ class TaskQueue:
                 if not is_batch or tp.consumer_config.ack_policy == AckPolicy.ALL:
                     await data[len(data) - 1].ack()
 
+                self.tasks_processed += 1
                 logger.info(f"finish task='{task_name}'({params}) result={result}")
 
             except Exception:
+                self.tasks_failed += 1
                 logger.exception(f"fail task: {task_name}({params})")
                 if not is_batch:
                     msg = data[0]
